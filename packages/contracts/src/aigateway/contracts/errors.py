@@ -104,3 +104,27 @@ class GuardrailsUnavailableError(Exception):
         self.code = "guardrails_unavailable"
         self.status_code = 503
         super().__init__(detail)
+
+
+class RagUnavailableError(Exception):
+    def __init__(self, detail: str = "rag unavailable") -> None:
+        self.detail = detail
+        self.code = "rag_unavailable"
+        self.status_code = 503
+        super().__init__(detail)
+
+
+class LlmUnavailableError(Exception):
+    def __init__(self, detail: str = "llm unavailable") -> None:
+        self.detail = detail
+        self.code = "llm_unavailable"
+        self.status_code = 503
+        super().__init__(detail)
+
+
+class DocumentNotFoundError(Exception):
+    def __init__(self, detail: str = "document not found") -> None:
+        self.detail = detail
+        self.code = "document_not_found"
+        self.status_code = 404
+        super().__init__(detail)

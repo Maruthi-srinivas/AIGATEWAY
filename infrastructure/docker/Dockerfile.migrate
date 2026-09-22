@@ -24,4 +24,4 @@ RUN uv sync --frozen --no-dev --all-packages \
 
 USER app
 
-CMD ["sh", "-c", "alembic -c services/auth/alembic.ini upgrade head && alembic -c apps/gateway/alembic.ini upgrade head && alembic -c services/guardrails/alembic.ini upgrade head"]
+CMD ["sh", "-c", "alembic -c services/auth/alembic.ini upgrade head && alembic -c apps/gateway/alembic.ini upgrade head && alembic -c services/guardrails/alembic.ini upgrade head && alembic -c services/rag/alembic.ini upgrade head"]

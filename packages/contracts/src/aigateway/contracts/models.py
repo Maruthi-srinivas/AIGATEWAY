@@ -161,6 +161,40 @@ class RetrievedChunk(BaseModel):
     score: float = 0.0
 
 
+class RetrieveResult(BaseModel):
+    chunks: list[RetrievedChunk] = Field(default_factory=list)
+
+
+class DocumentIngest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1)
+    classification: str | None = None
+    acl: list[str] = Field(default_factory=list)
+
+
+class DocumentOut(BaseModel):
+    id: str
+    tenant_id: str
+    title: str
+    classification: str | None = None
+    acl: list[str] = Field(default_factory=list)
+    chunk_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentList(BaseModel):
+    items: list[DocumentOut]
+    offset: int
+    limit: int
+
+
+class DocumentDetail(DocumentOut):
+    body: str
+
+
 class EvaluationResult(BaseModel):
     faithfulness: float | None = None
     context_recall: float | None = None

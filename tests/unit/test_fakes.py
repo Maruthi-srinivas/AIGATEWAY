@@ -31,6 +31,22 @@ async def test_fake_llm_echoes_stub() -> None:
     assert "".join(chunks) == "Stub: hello"
 
 
+async def test_fake_llm_echoes_grounded_context() -> None:
+    client = FakeLLMClient()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "CONTEXT:\n[1] document_id=d1 chunk_id=c1\nAcme HR paid time off is twenty days."
+            ),
+        },
+        {"role": "user", "content": "how much pto?"},
+    ]
+    answer = await client.generate(messages)
+    assert answer.startswith("According to the documents:")
+    assert "twenty days" in answer
+
+
 async def test_fake_guardrail_allows_by_default() -> None:
     guardrail = FakeGuardrail()
     texts = [GuardrailText(role="user", content="hello")]

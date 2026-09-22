@@ -49,6 +49,7 @@ def test_live_gateway_ready() -> None:
     assert body["redis"] is True
     assert body["auth"] is True
     assert body["guardrails"] is True
+    assert body["rag"] is True
 
 
 @skip_without_stack
@@ -69,6 +70,7 @@ def test_live_chat_authenticated_stub() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["answer"].startswith("Stub:")
+    assert body["citations"] == []
     assert body["conversation_id"]
     assert isinstance(body["guardrail_decisions"], list)
     assert isinstance(body["assessments"], list)
@@ -228,7 +230,9 @@ def test_live_chat_stream() -> None:
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
     assert "event: meta" in response.text
+    assert "event: token" in response.text
     assert "event: done" in response.text
+    assert '"citations"' in response.text
 
 
 @skip_without_stack
@@ -329,7 +333,7 @@ def test_live_secret_is_redacted() -> None:
     )
     assert response.status_code == 200
     body = response.json()
-    assert "[SECRET]" in body["answer"]
+    assert body["answer"] == "I don't know based on the available documents."
     assert "sk-abcdefghijklmnopqrstuvwxyz" not in body["answer"]
     assert any(item["rule_id"] == "pii" for item in body["guardrail_decisions"])
     detail = httpx.get(
@@ -528,3 +532,185 @@ def test_live_policy_rbac() -> None:
         timeout=5.0,
     )
     assert hr_on_eng.status_code == 403
+
+
+HR_PTO_QUESTION = "How many paid time off days per year does Acme HR give?"
+
+
+@skip_without_stack
+def test_live_hr_seed_is_cited_and_isolated() -> None:
+    hr = _login("user@hr.local")
+    eng = _login("user@eng.local")
+    sec = _login("sec@hr.local")
+    docs = httpx.get(f"{GATEWAY_URL}/v1/documents", headers=_bearer(sec), timeout=5.0)
+    assert docs.status_code == 200
+    hr_ids = {item["id"] for item in docs.json()["items"]}
+    assert hr_ids
+    hr_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": HR_PTO_QUESTION},
+        headers=_bearer(hr),
+        timeout=15.0,
+    )
+    assert hr_chat.status_code == 200
+    hr_body = hr_chat.json()
+    assert hr_body["citations"]
+    cited = {item["document_id"] for item in hr_body["citations"]}
+    assert cited <= hr_ids
+    assert cited & hr_ids
+    eng_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": HR_PTO_QUESTION},
+        headers=_bearer(eng),
+        timeout=15.0,
+    )
+    assert eng_chat.status_code == 200
+    eng_body = eng_chat.json()
+    eng_cited = {item["document_id"] for item in eng_body["citations"]}
+    assert not (eng_cited & hr_ids)
+
+
+@skip_without_stack
+def test_live_unknown_fact_is_i_dont_know() -> None:
+    hr = _login("user@hr.local")
+    response = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": "What is the purple zebra onboarding stipend zzxqwv?"},
+        headers=_bearer(hr),
+        timeout=15.0,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == "I don't know based on the available documents."
+    assert body["citations"] == []
+
+
+@skip_without_stack
+def test_live_ingest_rbac_and_tenant_retrieve() -> None:
+    marker = f"unique-hr-fact-{uuid.uuid4().hex}"
+    user = _login("user@hr.local")
+    forbidden = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={"title": "User doc", "text": marker},
+        headers=_bearer(user),
+        timeout=5.0,
+    )
+    assert forbidden.status_code == 403
+    sec = _login("sec@hr.local")
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={"title": "HR unique", "text": f"The {marker} policy grants nine extra days."},
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    doc_id = created.json()["id"]
+    hr_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What does the {marker} policy grant?"},
+        headers=_bearer(user),
+        timeout=15.0,
+    )
+    assert hr_chat.status_code == 200
+    assert any(item["document_id"] == doc_id for item in hr_chat.json()["citations"])
+    eng = _login("user@eng.local")
+    eng_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What does the {marker} policy grant?"},
+        headers=_bearer(eng),
+        timeout=15.0,
+    )
+    assert eng_chat.status_code == 200
+    assert all(item["document_id"] != doc_id for item in eng_chat.json()["citations"])
+
+
+@skip_without_stack
+def test_live_ingest_rejects_oversize() -> None:
+    sec = _login("sec@hr.local")
+    response = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={"title": "Too big", "text": "a" * (256 * 1024 + 1)},
+        headers=_bearer(sec),
+        timeout=30.0,
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "payload_too_large"
+
+
+@skip_without_stack
+def test_live_delete_document_drops_chunks() -> None:
+    marker = f"delete-me-{uuid.uuid4().hex}"
+    sec = _login("sec@hr.local")
+    user = _login("user@hr.local")
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={"title": "Temp", "text": f"Remember that {marker} is retired."},
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    doc_id = created.json()["id"]
+    first = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"Is {marker} retired?"},
+        headers=_bearer(user),
+        timeout=15.0,
+    )
+    assert first.status_code == 200
+    assert any(item["document_id"] == doc_id for item in first.json()["citations"])
+    deleted = httpx.delete(
+        f"{GATEWAY_URL}/v1/documents/{doc_id}",
+        headers=_bearer(sec),
+        timeout=5.0,
+    )
+    assert deleted.status_code == 200
+    second = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"Is {marker} retired?"},
+        headers=_bearer(user),
+        timeout=15.0,
+    )
+    assert second.status_code == 200
+    assert all(item["document_id"] != doc_id for item in second.json()["citations"])
+
+
+@skip_without_stack
+def test_live_grounded_stream_done_citations() -> None:
+    hr = _login("user@hr.local")
+    response = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": HR_PTO_QUESTION, "stream": True},
+        headers=_bearer(hr),
+        timeout=15.0,
+    )
+    assert response.status_code == 200
+    assert "event: meta" in response.text
+    assert "event: token" in response.text
+    assert "event: done" in response.text
+    assert "document_id" in response.text
+    assert "chunk_id" in response.text
+
+
+@skip_without_stack
+def test_live_platform_admin_ingests_into_other_tenant() -> None:
+    admin = _login("admin@platform.local")
+    eng = _login("user@eng.local")
+    eng_tenant = eng["user"]["tenant_id"]
+    marker = f"eng-only-{uuid.uuid4().hex}"
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        params={"tenant_id": eng_tenant},
+        json={"title": "Eng marker", "text": f"Engineering keeps {marker} in the runbook."},
+        headers=_bearer(admin),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    assert created.json()["tenant_id"] == eng_tenant
+    listed = httpx.get(
+        f"{GATEWAY_URL}/v1/documents",
+        params={"tenant_id": eng_tenant},
+        headers=_bearer(admin),
+        timeout=5.0,
+    )
+    assert listed.status_code == 200
+    assert any(item["id"] == created.json()["id"] for item in listed.json()["items"])

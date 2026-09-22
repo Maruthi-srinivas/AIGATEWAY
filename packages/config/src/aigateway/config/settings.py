@@ -34,6 +34,14 @@ class GatewaySettings(ServiceSettings):
     session_cache_message_limit: int = Field(default=20, ge=1)
     guardrails_base_url: str
     guardrails_timeout: float = Field(default=2.0, ge=0.1)
+    rag_base_url: str
+    rag_timeout: float = Field(default=2.0, ge=0.1)
+    document_body_max_bytes: int = Field(default=278528, ge=1024)
+    llm_mode: str = "fixture"
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: str = ""
+    llm_model: str = ""
+    llm_timeout_seconds: float = Field(default=30.0, ge=0.1)
 
 
 class AuthSettings(ServiceSettings):
@@ -68,3 +76,20 @@ class GuardrailsSettings(ServiceSettings):
     jev_api_url: str = "https://api.typesafe.ai/v1/systemone"
     jev_model: str = "jev-latest"
     jev_timeout_seconds: float = Field(default=0.8, ge=0.1)
+
+
+class RagSettings(ServiceSettings):
+    """RAG process settings. Embedding keys never live on the gateway."""
+
+    service_name: str = "rag"
+    postgres_dsn: str
+    internal_auth_token: str
+    embedding_mode: str = "fixture"
+    embedding_api_url: str = "https://api.openai.com/v1/embeddings"
+    embedding_api_key: str = ""
+    embedding_model: str = ""
+    rag_min_score: float = Field(default=0.3, ge=0.0, le=1.0)
+    rag_top_k: int = Field(default=8, ge=1, le=32)
+    rag_timeout_seconds: float = Field(default=2.0, ge=0.1)
+    postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
+    seed_enabled: bool = True

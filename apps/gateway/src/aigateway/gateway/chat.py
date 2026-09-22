@@ -23,12 +23,16 @@ from aigateway.contracts import (
     GuardrailText,
     InputBlockedError,
     JevAssessment,
+    LlmUnavailableError,
     MessageOut,
+    RagUnavailableError,
     RateLimitedError,
     RateLimiterUnavailableError,
     ValidationFailedError,
 )
+from aigateway.gateway.classify import is_chitchat
 from aigateway.gateway.deps import effective_tenant_id, require_auth, require_chat_role
+from aigateway.gateway.grounding import I_DONT_KNOW, grounded_messages
 from aigateway.gateway.rate_limit import RateLimitResult
 from aigateway.gateway.repository import (
     ConversationRecord,
@@ -259,7 +263,24 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     )
     history = [{"role": item.role, "content": item.content} for item in check.texts]
     cid = correlation_id_var.get()
-    raw_answer = await request.app.state.llm_client.generate(history)
+    citations = []
+    llm_messages = history
+    if is_chitchat(masked_user):
+        raw_answer = await _generate(request, ctx, llm_messages)
+    else:
+        try:
+            chunks = await request.app.state.rag_client.retrieve(
+                tenant_id=tenant_id,
+                query=masked_user,
+            )
+        except RagUnavailableError as exc:
+            await audit_chat(request, ctx, status_code=503, success=False)
+            raise exc
+        if not chunks:
+            raw_answer = I_DONT_KNOW
+        else:
+            llm_messages, citations = grounded_messages(history, chunks)
+            raw_answer = await _generate(request, ctx, llm_messages)
     try:
         outbound = await request.app.state.guardrail_client.check_output(
             tenant_id=tenant_id,
@@ -293,7 +314,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     )
     payload = ChatResponse(
         answer=answer,
-        citations=[],
+        citations=citations,
         confidence=confidence,
         trace_id=cid,
         conversation_id=str(conversation.id),
@@ -315,6 +336,14 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
             headers=limit.headers(),
         )
     return JSONResponse(payload.model_dump(), headers=limit.headers())
+
+
+async def _generate(request: Request, ctx: AuthContext, messages: list[dict[str, str]]) -> str:
+    try:
+        return await request.app.state.llm_client.generate(messages)
+    except LlmUnavailableError as exc:
+        await audit_chat(request, ctx, status_code=503, success=False)
+        raise exc
 
 
 async def _stream_answer(

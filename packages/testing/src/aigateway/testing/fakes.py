@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
-from aigateway.contracts.errors import AuthenticationError, GuardrailsUnavailableError
+from aigateway.contracts.errors import (
+    AuthenticationError,
+    DocumentNotFoundError,
+    GuardrailsUnavailableError,
+    LlmUnavailableError,
+    RagUnavailableError,
+)
 from aigateway.contracts.models import (
     AuthContext,
+    DocumentDetail,
+    DocumentIngest,
+    DocumentList,
+    DocumentOut,
     EvaluationResult,
     GuardrailCheckResult,
     GuardrailDecision,
@@ -111,28 +123,79 @@ class FakeGuardrail:
 
 
 class FakeRetriever:
+    def __init__(
+        self,
+        *,
+        unavailable: bool = False,
+        chunks: list[RetrievedChunk] | None = None,
+    ) -> None:
+        self.unavailable = unavailable
+        self.chunks = chunks
+        self.calls: list[dict] = []
+        self.documents: dict[str, list[DocumentDetail]] = {}
+
     async def retrieve(
         self,
         query: str,
         tenant_id: str,
         top_k: int = 8,
     ) -> list[RetrievedChunk]:
-        _ = tenant_id
-        return [
-            RetrievedChunk(
-                chunk_id="chunk-1",
-                document_id="doc-1",
-                content=query,
-                score=1.0,
-            )
-        ][:top_k]
+        self.calls.append({"query": query, "tenant_id": tenant_id, "top_k": top_k})
+        if self.unavailable:
+            raise RagUnavailableError()
+        if self.chunks is not None:
+            return list(self.chunks)[:top_k]
+        return []
+
+    async def ingest(self, tenant_id: str, body: DocumentIngest, created_by: str) -> DocumentOut:
+        _ = created_by
+        now = datetime.now(UTC)
+        item = DocumentOut(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
+            title=body.title,
+            classification=body.classification,
+            acl=list(body.acl),
+            chunk_count=1,
+            created_at=now,
+            updated_at=now,
+        )
+        self.documents.setdefault(tenant_id, []).append(
+            DocumentDetail(**item.model_dump(), body=body.text)
+        )
+        return item
+
+    async def list_documents(self, tenant_id: str, *, limit: int, offset: int) -> DocumentList:
+        rows = self.documents.get(tenant_id, [])
+        items = [DocumentOut(**row.model_dump(exclude={"body"})) for row in rows]
+        return DocumentList(items=items[offset : offset + limit], offset=offset, limit=limit)
+
+    async def get_document(self, tenant_id: str, document_id: str) -> DocumentDetail:
+        for item in self.documents.get(tenant_id, []):
+            if item.id == document_id:
+                return item
+        raise DocumentNotFoundError()
+
+    async def delete_document(self, tenant_id: str, document_id: str) -> None:
+        items = self.documents.get(tenant_id, [])
+        kept = [item for item in items if item.id != document_id]
+        if len(kept) == len(items):
+            raise DocumentNotFoundError()
+        self.documents[tenant_id] = kept
 
 
 class FakeLLMClient:
-    def __init__(self, delay_ms: float = 0) -> None:
+    def __init__(self, delay_ms: float = 0, *, unavailable: bool = False) -> None:
         self.delay_ms = delay_ms
+        self.unavailable = unavailable
+        self.calls: list[list[dict[str, str]]] = []
 
     def echo(self, messages: list[dict[str, str]]) -> str:
+        for item in messages:
+            content = item.get("content") or ""
+            if "CONTEXT:" in content:
+                excerpt = _context_excerpt(content)
+                return f"According to the documents: {excerpt}"
         last = messages[-1]["content"] if messages else ""
         return f"Stub: {last}"
 
@@ -143,6 +206,9 @@ class FakeLLMClient:
         stream: bool = False,
     ) -> str:
         _ = stream
+        self.calls.append(messages)
+        if self.unavailable:
+            raise LlmUnavailableError()
         return self.echo(messages)
 
     async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
@@ -151,6 +217,14 @@ class FakeLLMClient:
             if self.delay_ms:
                 await asyncio.sleep(self.delay_ms / 1000)
             yield word if index == len(words) - 1 else f"{word} "
+
+
+def _context_excerpt(content: str) -> str:
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if line.startswith("[") and index + 1 < len(lines):
+            return lines[index + 1][:240]
+    return "context"
 
 
 class FakeEvaluator:

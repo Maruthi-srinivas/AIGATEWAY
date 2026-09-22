@@ -8,9 +8,12 @@ from aigateway.contracts import (
     AuthenticationError,
     AuthorizationError,
     ConversationNotFoundError,
+    DocumentNotFoundError,
     GuardrailsUnavailableError,
     InputBlockedError,
+    LlmUnavailableError,
     PayloadTooLargeError,
+    RagUnavailableError,
     RateLimitedError,
     RateLimiterUnavailableError,
     ValidationFailedError,
@@ -74,6 +77,10 @@ def register_exception_handlers(app) -> None:
     async def _not_found(_, exc: ConversationNotFoundError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
 
+    @app.exception_handler(DocumentNotFoundError)
+    async def _doc_not_found(_, exc: DocumentNotFoundError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
     @app.exception_handler(RateLimitedError)
     async def _rate_limited(_, exc: RateLimitedError) -> JSONResponse:
         return json_error(
@@ -101,6 +108,14 @@ def register_exception_handlers(app) -> None:
 
     @app.exception_handler(GuardrailsUnavailableError)
     async def _guardrails_down(_, exc: GuardrailsUnavailableError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
+    @app.exception_handler(RagUnavailableError)
+    async def _rag_down(_, exc: RagUnavailableError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
+    @app.exception_handler(LlmUnavailableError)
+    async def _llm_down(_, exc: LlmUnavailableError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
 
     @app.exception_handler(RequestValidationError)

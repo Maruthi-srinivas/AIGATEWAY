@@ -1,1 +1,1 @@
-"""RAG service stub."""
+"""RAG service."""

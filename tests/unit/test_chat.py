@@ -11,11 +11,13 @@ from aigateway.contracts import (
     GuardrailDecision,
     GuardrailPolicyUpdate,
     GuardrailText,
+    RetrievedChunk,
 )
 from aigateway.gateway.app import create_app
+from aigateway.gateway.grounding import I_DONT_KNOW
 from aigateway.gateway.rate_limit import DeniedRateLimiter, UnavailableRateLimiter
 from aigateway.gateway.repository import MemoryChatRepository
-from aigateway.testing import FakeGuardrail
+from aigateway.testing import FakeGuardrail, FakeLLMClient, FakeRetriever
 from tests.helpers import (
     DEFAULT_TENANT_ID,
     DEFAULT_USER_ID,
@@ -308,7 +310,7 @@ def test_secret_is_redacted_before_persist_and_stub() -> None:
         )
     assert response.status_code == 200
     body = response.json()
-    assert body["answer"] == "Stub: key is [SECRET]"
+    assert body["answer"] == "I don't know based on the available documents."
     assert body["guardrail_decisions"][0]["rule_id"] == "pii"
     stored = next(iter(repo.messages.values()))
     assert stored[0].content == masked
@@ -498,3 +500,166 @@ def test_output_guardrails_down_returns_503() -> None:
     stored = next(iter(repo.messages.values()))
     assert len(stored) == 1
     assert stored[0].role == "user"
+
+
+def _chunk() -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id="cccccccccccccccccccccccccccccccccccc",
+        document_id="dddddddddddddddddddddddddddddddddddd",
+        content="Acme HR paid time off is twenty days per year.",
+        score=0.9,
+    )
+
+
+def test_chitchat_skips_retrieve_and_has_empty_citations() -> None:
+    retriever = FakeRetriever(chunks=[_chunk()])
+    llm = FakeLLMClient()
+    app = _app(rag_client=retriever, llm_client=llm)
+    with TestClient(app) as client:
+        response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"].startswith("Stub:")
+    assert body["citations"] == []
+    assert retriever.calls == []
+    assert llm.calls
+
+
+def test_unknown_fact_returns_i_dont_know_without_llm() -> None:
+    retriever = FakeRetriever()
+    llm = FakeLLMClient()
+    app = _app(rag_client=retriever, llm_client=llm)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "what is the leave policy"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == I_DONT_KNOW
+    assert body["citations"] == []
+    assert retriever.calls
+    assert llm.calls == []
+
+
+def test_rag_down_returns_503() -> None:
+    app = _app(rag_client=FakeRetriever(unavailable=True))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "what is the leave policy"},
+            headers=AUTH,
+        )
+    assert response.status_code == 503
+    assert response.json()["code"] == "rag_unavailable"
+
+
+def test_llm_down_returns_503() -> None:
+    app = _app(
+        rag_client=FakeRetriever(chunks=[_chunk()]),
+        llm_client=FakeLLMClient(unavailable=True),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    assert response.status_code == 503
+    assert response.json()["code"] == "llm_unavailable"
+
+
+def test_grounded_chat_returns_prompt_citations() -> None:
+    chunk = _chunk()
+    app = _app(rag_client=FakeRetriever(chunks=[chunk]))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert "According to the documents" in body["answer"]
+    assert "twenty days" in body["answer"]
+    assert body["citations"] == [{"document_id": chunk.document_id, "chunk_id": chunk.chunk_id}]
+
+
+def test_stream_done_includes_citations() -> None:
+    chunk = _chunk()
+    app = _app(rag_client=FakeRetriever(chunks=[chunk]))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days", "stream": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    text = response.text
+    assert "event: meta" in text
+    assert "event: token" in text
+    assert "event: done" in text
+    assert chunk.document_id in text
+    assert chunk.chunk_id in text
+
+
+def test_app_user_cannot_ingest_documents() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/documents",
+            json={"title": "Policy", "text": "A fact."},
+            headers=AUTH,
+        )
+    assert response.status_code == 403
+
+
+def test_security_admin_can_ingest_and_list_documents() -> None:
+    retriever = FakeRetriever()
+    app = _app(
+        auth_client=FakeAuthClient(context=_ctx(role="security_admin")),
+        rag_client=retriever,
+    )
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/documents",
+            json={"title": "Policy", "text": "A fact."},
+            headers=AUTH,
+        )
+        listed = client.get("/v1/documents", headers=AUTH)
+    assert created.status_code == 200
+    body = created.json()
+    assert body["title"] == "Policy"
+    assert body["tenant_id"] == DEFAULT_TENANT_ID
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["id"] == body["id"]
+
+
+def test_security_admin_cannot_ingest_into_other_tenant() -> None:
+    app = _app(auth_client=FakeAuthClient(context=_ctx(role="security_admin")))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/documents",
+            params={"tenant_id": OTHER_TENANT_ID},
+            json={"title": "Policy", "text": "A fact."},
+            headers=AUTH,
+        )
+    assert response.status_code == 403
+
+
+def test_platform_admin_can_ingest_into_other_tenant() -> None:
+    retriever = FakeRetriever()
+    app = _app(
+        auth_client=FakeAuthClient(context=_ctx(role="platform_admin")),
+        rag_client=retriever,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/documents",
+            params={"tenant_id": OTHER_TENANT_ID},
+            json={"title": "Eng", "text": "On-call lasts one week."},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    assert response.json()["tenant_id"] == OTHER_TENANT_ID

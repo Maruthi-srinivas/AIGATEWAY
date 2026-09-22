@@ -14,6 +14,9 @@ from aigateway.contracts import (
     ChatResponse,
     ConversationDetail,
     ConversationList,
+    DocumentDetail,
+    DocumentIngest,
+    DocumentList,
     GuardrailPolicy,
     GuardrailPolicyUpdate,
 )
@@ -21,15 +24,22 @@ from aigateway.gateway.auth_client import HttpAuthClient
 from aigateway.gateway.chat import handle_chat, handle_get_conversation, handle_list_conversations
 from aigateway.gateway.db import close_engine, init_engine
 from aigateway.gateway.deps import require_auth
+from aigateway.gateway.documents import (
+    handle_delete_document,
+    handle_get_document,
+    handle_ingest,
+    handle_list_documents,
+)
 from aigateway.gateway.errors import register_exception_handlers
 from aigateway.gateway.guardrail_client import HttpGuardrailClient
+from aigateway.gateway.llm import build_llm_client
 from aigateway.gateway.middleware import BodySizeLimitMiddleware, CorrelationIdMiddleware
 from aigateway.gateway.policy import handle_get_policy, handle_patch_policy
+from aigateway.gateway.rag_client import HttpRagClient
 from aigateway.gateway.rate_limit import RedisTokenBucket
 from aigateway.gateway.readiness import ReadinessChecker
 from aigateway.gateway.repository import SqlChatRepository
 from aigateway.gateway.session_cache import SessionCache
-from aigateway.gateway.stub_llm import StubLLMClient
 from aigateway.telemetry import get_logger
 
 logger = get_logger(__name__)
@@ -44,8 +54,10 @@ def create_app(
     check_redis: CheckFn | None = None,
     check_auth: CheckFn | None = None,
     check_guardrails: CheckFn | None = None,
+    check_rag: CheckFn | None = None,
     auth_client: HttpAuthClient | None = None,
     guardrail_client=None,
+    rag_client=None,
     rate_limiter=None,
     chat_repo=None,
     llm_client=None,
@@ -58,6 +70,7 @@ def create_app(
         check_redis=check_redis,
         check_auth=check_auth,
         check_guardrails=check_guardrails,
+        check_rag=check_rag,
     )
 
     @asynccontextmanager
@@ -68,6 +81,10 @@ def create_app(
             app.state.auth_client = HttpAuthClient(settings, http_client)
         if app.state.guardrail_client is None:
             app.state.guardrail_client = HttpGuardrailClient(settings, http_client)
+        if app.state.rag_client is None:
+            app.state.rag_client = HttpRagClient(settings, http_client)
+        if app.state.llm_client is None:
+            app.state.llm_client = build_llm_client(settings, http_client)
         yield
         if app.state.redis is not None:
             await app.state.redis.aclose()
@@ -76,7 +93,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.4.0",
+        version="0.5.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
@@ -87,6 +104,7 @@ def create_app(
     app.state.checker = checker
     app.state.auth_client = auth_client
     app.state.guardrail_client = guardrail_client
+    app.state.rag_client = rag_client
     app.state.rate_limiter = rate_limiter
     app.state.chat_repo = chat_repo
     app.state.llm_client = llm_client
@@ -110,7 +128,7 @@ def create_app(
                 limit=settings.session_cache_message_limit,
             )
         if app.state.llm_client is None:
-            app.state.llm_client = StubLLMClient(settings.stub_stream_delay_ms)
+            app.state.llm_client = build_llm_client(settings, app.state.http_client)
 
     app.state.ensure_runtime = ensure_runtime
 
@@ -127,14 +145,16 @@ def create_app(
             "redis": status.redis,
             "auth": status.auth,
             "guardrails": status.guardrails,
+            "rag": status.rag,
         }
         if not status.ok:
             logger.warning(
-                "readiness failed postgres=%s redis=%s auth=%s guardrails=%s",
+                "readiness failed postgres=%s redis=%s auth=%s guardrails=%s rag=%s",
                 status.postgres,
                 status.redis,
                 status.auth,
                 status.guardrails,
+                status.rag,
             )
             return JSONResponse(status_code=503, content=body)
         return JSONResponse(status_code=200, content=body)
@@ -150,7 +170,7 @@ def create_app(
             403: {"description": "Forbidden"},
             404: {"description": "Conversation not found"},
             429: {"description": "Rate limited"},
-            503: {"description": "Rate limiter or guardrails unavailable"},
+            503: {"description": "Rate limiter, guardrails, rag, or llm unavailable"},
         },
     )
     async def chat(request: Request, body: ChatRequest):
@@ -167,6 +187,39 @@ def create_app(
         tenant_id: str | None = None,
     ) -> GuardrailPolicy:
         return await handle_patch_policy(request, body, tenant_id)
+
+    @app.post("/v1/documents", tags=["rag"])
+    async def ingest_document(
+        request: Request,
+        body: DocumentIngest,
+        tenant_id: str | None = None,
+    ):
+        return await handle_ingest(request, body, tenant_id)
+
+    @app.get("/v1/documents", tags=["rag"])
+    async def list_documents(
+        request: Request,
+        tenant_id: str | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ) -> DocumentList:
+        return await handle_list_documents(request, tenant_id=tenant_id, limit=limit, offset=offset)
+
+    @app.get("/v1/documents/{document_id}", tags=["rag"])
+    async def get_document(
+        request: Request,
+        document_id: str,
+        tenant_id: str | None = None,
+    ) -> DocumentDetail:
+        return await handle_get_document(request, document_id, tenant_id)
+
+    @app.delete("/v1/documents/{document_id}", tags=["rag"])
+    async def delete_document(
+        request: Request,
+        document_id: str,
+        tenant_id: str | None = None,
+    ) -> dict[str, str]:
+        return await handle_delete_document(request, document_id, tenant_id)
 
     @app.get("/v1/conversations", tags=["chat"])
     async def list_conversations(

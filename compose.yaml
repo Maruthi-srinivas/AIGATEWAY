@@ -11,7 +11,7 @@ x-auth-env: &auth-env
 
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aigateway}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aigateway}
@@ -96,6 +96,8 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AUTH_BASE_URL: http://auth:8000
       GUARDRAILS_BASE_URL: http://guardrails:8000
+      RAG_BASE_URL: http://rag:8000
+      RAG_TIMEOUT: ${RAG_TIMEOUT:-2}
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
       RATE_LIMIT_TENANT_PER_MINUTE: ${RATE_LIMIT_TENANT_PER_MINUTE:-60}
       RATE_LIMIT_USER_PER_MINUTE: ${RATE_LIMIT_USER_PER_MINUTE:-20}
@@ -103,6 +105,11 @@ services:
       STUB_STREAM_DELAY_MS: ${STUB_STREAM_DELAY_MS:-20}
       CHAT_BODY_MAX_BYTES: ${CHAT_BODY_MAX_BYTES:-32768}
       CHAT_MESSAGE_MAX_CHARS: ${CHAT_MESSAGE_MAX_CHARS:-8000}
+      LLM_MODE: ${LLM_MODE:-fixture}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +120,8 @@ services:
       auth:
         condition: service_healthy
       guardrails:
+        condition: service_healthy
+      rag:
         condition: service_healthy
     restart: unless-stopped
 
@@ -146,6 +155,23 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HOST: 0.0.0.0
       PORT: "8000"
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
+      EMBEDDING_MODE: ${EMBEDDING_MODE:-fixture}
+      EMBEDDING_API_URL: ${EMBEDDING_API_URL:-https://api.openai.com/v1/embeddings}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      RAG_MIN_SCORE: ${RAG_MIN_SCORE:-0.3}
+      RAG_TOP_K: ${RAG_TOP_K:-8}
+      RAG_TIMEOUT_SECONDS: ${RAG_TIMEOUT_SECONDS:-2}
+      SEED_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      auth:
+        condition: service_healthy
     restart: unless-stopped
 
   guardrails:

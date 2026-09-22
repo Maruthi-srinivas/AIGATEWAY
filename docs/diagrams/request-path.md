@@ -1,8 +1,8 @@
 # Request path
 
-## Version 4 (current)
+## Version 5 (current)
 
-The gateway is the only public port. Auth issues JWTs. After rate limits, the gateway calls `services/guardrails` for input checks (phrase rules, Perspective or fixture, and Jev). Chat is still a stub LLM. After the stub, the gateway calls guardrails again for a thin output check. Unsafe prompts never reach the stub. Unsafe stub text is replaced with a refusal before persist and SSE tokens.
+The gateway is the only public port. After input guardrails, it classifies the latest user message. Greetings skip retrieve. Knowledge questions call `services/rag` with a tenant filter, then `LLMClient.generate` with a grounded prompt. Empty retrieve hits return a fixed I-don't-know string without calling the LLM. Streaming still generates fully, runs the Jev output check, then SSE-replays tokens. Citations on JSON and on `done` are every chunk inserted into the prompt.
 
 ```mermaid
 sequenceDiagram
@@ -11,6 +11,8 @@ sequenceDiagram
     participant Auth
     participant Redis
     participant Guardrails
+    participant RAG
+    participant LLM
     participant Postgres
     Client->>Gateway: GET /v1/health
     Gateway-->>Client: 200 ok
@@ -19,6 +21,7 @@ sequenceDiagram
     Gateway->>Redis: PING
     Gateway->>Auth: GET /health
     Gateway->>Guardrails: GET /health
+    Gateway->>RAG: GET /health
     Gateway-->>Client: 200 or 503
     Client->>Gateway: POST /v1/auth/login
     Gateway->>Auth: proxy login
@@ -42,16 +45,25 @@ sequenceDiagram
             Gateway-->>Client: 400 input_blocked
         else allow or redact
             Gateway->>Postgres: insert conversation and user message
-            Gateway->>Gateway: stub generate
-            Gateway->>Guardrails: POST /internal/v1/check-output
-            alt output check down
-                Gateway-->>Client: 503 guardrails_unavailable
-            else output blocks
-                Gateway->>Postgres: insert refusal
-                Gateway-->>Client: 200 JSON or SSE with assessments
-            else allow
-                Gateway->>Postgres: insert assistant message
-                Gateway-->>Client: 200 JSON or SSE with decisions and assessments
+            alt chitchat
+                Gateway->>LLM: generate without context
+            else knowledge
+                Gateway->>RAG: POST /internal/v1/retrieve
+                alt RAG down
+                    Gateway-->>Client: 503 rag_unavailable
+                else no chunks above min_score
+                    Gateway->>Postgres: I-do-not-know assistant
+                    Gateway-->>Client: 200 citations empty
+                else hits
+                    Gateway->>LLM: grounded generate
+                    alt LLM down
+                        Gateway-->>Client: 503 llm_unavailable
+                    else ok
+                        Gateway->>Guardrails: POST /internal/v1/check-output
+                        Gateway->>Postgres: assistant message
+                        Gateway-->>Client: 200 JSON or SSE with citations
+                    end
+                end
             end
         end
     end

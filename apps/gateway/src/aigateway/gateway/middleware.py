@@ -26,7 +26,10 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        max_bytes = getattr(request.app.state.settings, "chat_body_max_bytes", 32768)
+        settings = request.app.state.settings
+        chat_max = getattr(settings, "chat_body_max_bytes", 32768)
+        doc_max = getattr(settings, "document_body_max_bytes", 278528)
+        max_bytes = doc_max if request.url.path.startswith("/v1/documents") else chat_max
         content_length = request.headers.get("content-length")
         if content_length and content_length.isdigit() and int(content_length) > max_bytes:
             return json_error(400, "payload_too_large", "payload too large")
