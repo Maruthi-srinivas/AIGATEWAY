@@ -1,0 +1,61 @@
+[project]
+name = "aigateway-workspace"
+version = "0.1.0"
+description = "AI Safety Gateway — Docker-only uv workspace"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.uv.workspace]
+members = [
+    "apps/gateway",
+    "apps/worker",
+    "services/rag",
+    "services/guardrails",
+    "services/evals",
+    "services/auth",
+    "packages/contracts",
+    "packages/config",
+    "packages/telemetry",
+    "packages/testing",
+]
+
+[tool.uv.sources]
+aigateway-contracts = { workspace = true }
+aigateway-config = { workspace = true }
+aigateway-telemetry = { workspace = true }
+aigateway-testing = { workspace = true }
+aigateway-gateway = { workspace = true }
+aigateway-worker = { workspace = true }
+aigateway-rag = { workspace = true }
+aigateway-guardrails = { workspace = true }
+aigateway-evals = { workspace = true }
+aigateway-auth = { workspace = true }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["apps", "services", "packages", "tests"]
+extend-exclude = [".venv", "**/script.py.mako"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aigateway", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: hits docker compose services on the internal network",
+]

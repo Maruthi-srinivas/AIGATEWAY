@@ -1,0 +1,220 @@
+name: aigateway
+
+x-auth-env: &auth-env
+  POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
+  JWT_SECRET: ${JWT_SECRET:-dev-insecure-jwt-secret-change-me}
+  INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
+  SEED_PASSWORD: ${SEED_PASSWORD:-changeme}
+  SEED_HR_API_KEY: ${SEED_HR_API_KEY:-agt_demo_hr_local_docker_only_key}
+  SEED_ENG_API_KEY: ${SEED_ENG_API_KEY:-agt_demo_eng_local_docker_only_key}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aigateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aigateway}
+      POSTGRES_DB: ${POSTGRES_DB:-aigateway}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aigateway -d aigateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.migrate
+    healthcheck:
+      disable: true
+    environment:
+      <<: *auth-env
+      SERVICE_NAME: migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  auth:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-auth
+        MODULE: aigateway.auth.main:app
+        HEALTH_PATH: /health
+        PORT: "8000"
+    environment:
+      <<: *auth-env
+      SERVICE_NAME: auth
+      HOST: 0.0.0.0
+      PORT: "8000"
+      SEED_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-gateway
+        MODULE: aigateway.gateway.main:app
+        HEALTH_PATH: /v1/health
+        PORT: "8000"
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_NAME: gateway
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      AUTH_BASE_URL: http://auth:8000
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
+      RATE_LIMIT_TENANT_PER_MINUTE: ${RATE_LIMIT_TENANT_PER_MINUTE:-60}
+      RATE_LIMIT_USER_PER_MINUTE: ${RATE_LIMIT_USER_PER_MINUTE:-20}
+      RATE_LIMIT_API_KEY_PER_MINUTE: ${RATE_LIMIT_API_KEY_PER_MINUTE:-60}
+      STUB_STREAM_DELAY_MS: ${STUB_STREAM_DELAY_MS:-20}
+      CHAT_BODY_MAX_BYTES: ${CHAT_BODY_MAX_BYTES:-32768}
+      CHAT_MESSAGE_MAX_CHARS: ${CHAT_MESSAGE_MAX_CHARS:-8000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      auth:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-worker
+        MODULE: aigateway.worker.main:app
+        HEALTH_PATH: /health
+        PORT: "8000"
+    environment:
+      SERVICE_NAME: worker
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+      PORT: "8000"
+    restart: unless-stopped
+
+  rag:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-rag
+        MODULE: aigateway.rag.main:app
+        HEALTH_PATH: /health
+        PORT: "8000"
+    environment:
+      SERVICE_NAME: rag
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+      PORT: "8000"
+    restart: unless-stopped
+
+  guardrails:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-guardrails
+        MODULE: aigateway.guardrails.main:app
+        HEALTH_PATH: /health
+        PORT: "8000"
+    environment:
+      SERVICE_NAME: guardrails
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+      PORT: "8000"
+    restart: unless-stopped
+
+  evals:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.app
+      args:
+        PACKAGE: aigateway-evals
+        MODULE: aigateway.evals.main:app
+        HEALTH_PATH: /health
+        PORT: "8000"
+    environment:
+      SERVICE_NAME: evals
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+      PORT: "8000"
+    restart: unless-stopped
+
+  test:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.test
+    environment:
+      GATEWAY_URL: http://gateway:8000
+      WORKER_URL: http://worker:8000
+      RAG_URL: http://rag:8000
+      GUARDRAILS_URL: http://guardrails:8000
+      EVALS_URL: http://evals:8000
+      AUTH_URL: http://auth:8000
+      POSTGRES_DSN: postgresql://aigateway:aigateway@postgres:5432/aigateway
+      REDIS_URL: redis://redis:6379/0
+      AUTH_BASE_URL: http://auth:8000
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-jwt-secret-change-me}
+      SEED_PASSWORD: ${SEED_PASSWORD:-changeme}
+      SEED_HR_API_KEY: ${SEED_HR_API_KEY:-agt_demo_hr_local_docker_only_key}
+      SERVICE_NAME: test
+    depends_on:
+      gateway:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+      rag:
+        condition: service_healthy
+      guardrails:
+        condition: service_healthy
+      evals:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

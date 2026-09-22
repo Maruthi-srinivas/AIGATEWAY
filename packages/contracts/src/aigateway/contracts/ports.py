@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Protocol, runtime_checkable
+
+from aigateway.contracts.models import (
+    AuthContext,
+    EvaluationResult,
+    GuardrailDecision,
+    RetrievedChunk,
+)
+
+
+@runtime_checkable
+class AuthProvider(Protocol):
+    async def authenticate(
+        self,
+        *,
+        authorization: str | None = None,
+        api_key: str | None = None,
+    ) -> AuthContext: ...
+
+
+@runtime_checkable
+class Guardrail(Protocol):
+    async def check(
+        self,
+        text: str,
+        context: AuthContext | None = None,
+    ) -> GuardrailDecision: ...
+
+
+@runtime_checkable
+class Retriever(Protocol):
+    async def retrieve(
+        self,
+        query: str,
+        tenant_id: str,
+        top_k: int = 8,
+    ) -> list[RetrievedChunk]: ...
+
+
+@runtime_checkable
+class LLMClient(Protocol):
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        stream: bool = False,
+    ) -> str: ...
+
+    def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]: ...
+
+
+@runtime_checkable
+class Evaluator(Protocol):
+    async def evaluate(
+        self,
+        question: str,
+        answer: str,
+        contexts: list[str],
+    ) -> EvaluationResult: ...

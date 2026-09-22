@@ -1,0 +1,61 @@
+"""Shared API models and Protocol ports. Implementations live in services, not here."""
+
+from aigateway.contracts.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    ConversationNotFoundError,
+    PayloadTooLargeError,
+    RateLimitedError,
+    RateLimiterUnavailableError,
+    ValidationFailedError,
+)
+from aigateway.contracts.models import (
+    AuthContext,
+    ChatRequest,
+    ChatResponse,
+    Citation,
+    ConversationDetail,
+    ConversationList,
+    ConversationSummary,
+    EvaluationResult,
+    GuardrailDecision,
+    LoginRequest,
+    MessageOut,
+    RefreshRequest,
+    RetrievedChunk,
+)
+from aigateway.contracts.ports import (
+    AuthProvider,
+    Evaluator,
+    Guardrail,
+    LLMClient,
+    Retriever,
+)
+
+__all__ = [
+    "AuthContext",
+    "AuthProvider",
+    "AuthenticationError",
+    "AuthorizationError",
+    "ChatRequest",
+    "ChatResponse",
+    "Citation",
+    "ConversationDetail",
+    "ConversationList",
+    "ConversationNotFoundError",
+    "ConversationSummary",
+    "EvaluationResult",
+    "Evaluator",
+    "Guardrail",
+    "GuardrailDecision",
+    "LLMClient",
+    "LoginRequest",
+    "MessageOut",
+    "PayloadTooLargeError",
+    "RateLimitedError",
+    "RateLimiterUnavailableError",
+    "RefreshRequest",
+    "RetrievedChunk",
+    "Retriever",
+    "ValidationFailedError",
+]
