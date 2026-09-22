@@ -50,10 +50,15 @@ class FakeGuardrail:
         *,
         unavailable: bool = False,
         result: GuardrailCheckResult | None = None,
+        output_result: GuardrailCheckResult | None = None,
+        output_unavailable: bool = False,
     ) -> None:
         self.unavailable = unavailable
         self.result = result
+        self.output_result = output_result
+        self.output_unavailable = output_unavailable
         self.calls: list[dict] = []
+        self.output_calls: list[dict] = []
         self.policies: dict[str, GuardrailPolicy] = {}
 
     async def check(
@@ -80,6 +85,19 @@ class FakeGuardrail:
             raise GuardrailsUnavailableError()
         if self.result is not None:
             return self.result
+        return GuardrailCheckResult(decision="allow", decisions=[], texts=list(texts))
+
+    async def check_output(
+        self,
+        *,
+        tenant_id: str,
+        texts: list[GuardrailText],
+    ) -> GuardrailCheckResult:
+        self.output_calls.append({"tenant_id": tenant_id, "texts": texts})
+        if self.unavailable or self.output_unavailable:
+            raise GuardrailsUnavailableError()
+        if self.output_result is not None:
+            return self.output_result
         return GuardrailCheckResult(decision="allow", decisions=[], texts=list(texts))
 
     async def get_policy(self, tenant_id: str) -> GuardrailPolicy:

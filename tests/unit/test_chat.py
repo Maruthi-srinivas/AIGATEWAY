@@ -411,3 +411,90 @@ def test_policy_requires_auth() -> None:
     with TestClient(app) as client:
         response = client.get("/v1/guardrails/policy")
     assert response.status_code == 401
+
+
+def test_security_admin_can_patch_jev_thresholds() -> None:
+    guardrail = FakeGuardrail()
+    app = _app(
+        auth_client=FakeAuthClient(context=_ctx(role="security_admin")),
+        guardrail_client=guardrail,
+    )
+    with TestClient(app) as client:
+        response = client.patch(
+            "/v1/guardrails/policy",
+            json={"jev_injection_threshold": 0.4, "jev_enabled": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["jev_injection_threshold"] == 0.4
+    assert body["jev_enabled"] is True
+
+
+def test_output_block_persists_refusal_not_stub() -> None:
+    repo = MemoryChatRepository()
+    guardrail = FakeGuardrail(
+        output_result=GuardrailCheckResult(
+            decision="block",
+            decisions=[
+                GuardrailDecision(
+                    decision="block",
+                    rule_id="jev_output_toxicity",
+                    score=0.99,
+                    reason="blocked",
+                )
+            ],
+            texts=[],
+            assessments=[],
+        )
+    )
+    app = _app(chat_repo=repo, guardrail_client=guardrail)
+    with TestClient(app) as client:
+        response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == "The assistant response was blocked by output guardrails."
+    assert body["guardrail_decisions"][0]["rule_id"] == "jev_output_toxicity"
+    stored = next(iter(repo.messages.values()))
+    assert stored[1].content == body["answer"]
+    assert "Stub:" not in stored[1].content
+
+
+def test_output_block_stream_never_emits_stub_tokens() -> None:
+    guardrail = FakeGuardrail(
+        output_result=GuardrailCheckResult(
+            decision="block",
+            decisions=[
+                GuardrailDecision(
+                    decision="block",
+                    rule_id="jev_output_pii",
+                    score=0.99,
+                    reason="blocked",
+                )
+            ],
+            texts=[],
+        )
+    )
+    app = _app(guardrail_client=guardrail)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "hello", "stream": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    assert "event: token" in response.text
+    assert "Stub:" not in response.text
+    assert "blocked by output guardrails" in response.text
+
+
+def test_output_guardrails_down_returns_503() -> None:
+    repo = MemoryChatRepository()
+    app = _app(chat_repo=repo, guardrail_client=FakeGuardrail(output_unavailable=True))
+    with TestClient(app) as client:
+        response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
+    assert response.status_code == 503
+    assert response.json()["code"] == "guardrails_unavailable"
+    stored = next(iter(repo.messages.values()))
+    assert len(stored) == 1
+    assert stored[0].role == "user"

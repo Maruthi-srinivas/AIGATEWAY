@@ -64,3 +64,7 @@ class GuardrailsSettings(ServiceSettings):
     guardrails_moderation_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     guardrails_timeout_seconds: float = Field(default=2.0, ge=0.1)
     postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
+    jev_api_key: str = ""
+    jev_api_url: str = "https://api.typesafe.ai/v1/systemone"
+    jev_model: str = "jev-latest"
+    jev_timeout_seconds: float = Field(default=0.8, ge=0.1)

@@ -37,3 +37,5 @@ async def test_fake_guardrail_allows_by_default() -> None:
     result = await guardrail.check_input(tenant_id="t1", texts=texts)
     assert result.decision == "allow"
     assert result.texts == texts
+    output = await guardrail.check_output(tenant_id="t1", texts=texts)
+    assert output.decision == "allow"

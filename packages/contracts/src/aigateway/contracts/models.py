@@ -55,6 +55,16 @@ class GuardrailDecision(BaseModel):
     reason: str | None = None
 
 
+class JevAssessment(BaseModel):
+    stage: Literal["input", "output"]
+    question_id: str
+    kind: Literal["noul", "choice", "score"]
+    score: float | None = None
+    choice: str | None = None
+    confidence: float | None = None
+    distribution: dict[str, float] | None = None
+
+
 class GuardrailText(BaseModel):
     role: str
     content: str
@@ -64,6 +74,7 @@ class GuardrailCheckResult(BaseModel):
     decision: Literal["allow", "redact", "block"]
     decisions: list[GuardrailDecision] = Field(default_factory=list)
     texts: list[GuardrailText] = Field(default_factory=list)
+    assessments: list[JevAssessment] = Field(default_factory=list)
 
 
 class GuardrailPolicy(BaseModel):
@@ -75,6 +86,14 @@ class GuardrailPolicy(BaseModel):
     pii: bool = True
     pii_action: Literal["redact", "block"] = "redact"
     max_input_chars: int = Field(default=4000, ge=1, le=8000)
+    jev_enabled: bool = True
+    jev_injection_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_jailbreak_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_toxicity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_pii_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_risk_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_output_toxicity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    jev_output_pii_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 
 
 class GuardrailPolicyUpdate(BaseModel):
@@ -87,6 +106,14 @@ class GuardrailPolicyUpdate(BaseModel):
     pii: bool | None = None
     pii_action: Literal["redact", "block"] | None = None
     max_input_chars: int | None = Field(default=None, ge=1, le=8000)
+    jev_enabled: bool | None = None
+    jev_injection_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_jailbreak_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_toxicity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_pii_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_risk_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_output_toxicity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    jev_output_pii_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ChatResponse(BaseModel):
@@ -97,6 +124,7 @@ class ChatResponse(BaseModel):
     conversation_id: str | None = None
     message_id: str | None = None
     guardrail_decisions: list[GuardrailDecision] = Field(default_factory=list)
+    assessments: list[JevAssessment] = Field(default_factory=list)
 
 
 class ConversationSummary(BaseModel):

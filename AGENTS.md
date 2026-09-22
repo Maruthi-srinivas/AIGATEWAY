@@ -5,14 +5,14 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## Scope
 
 - Implement one roadmap version at a time ([12_VERSION_FEATURE_ROADMAP.md](12_VERSION_FEATURE_ROADMAP.md)).
-- Current shipped slice is Version 4: auth, RBAC, tenancy, stub chat, rate limits, SSE, conversations, **input guardrails**.
-- Do not add RAG logic, output guardrails, Kafka, Grafana, or Kubernetes until their version.
+- Current shipped slice is Version 4: auth, RBAC, tenancy, stub chat, rate limits, SSE, conversations, **input guardrails**, and a thin Jev output check (toxicity / PII / confidence).
+- Do not add RAG logic, Kafka, Grafana, or Kubernetes until their version. Full output hallucination and citation checks remain Version 7.
 
 ## Architecture
 
 - Generate **interfaces before implementations**. Ports live in `packages/contracts`.
 - The gateway **orchestrates** and is the only public port. Identity lives in `services/auth`. Input checks live in `services/guardrails`.
-- Gateway must not hold `JWT_SECRET`, `GUARDRAILS_API_KEY`, or user tables. Introspect and guardrail checks use `INTERNAL_AUTH_TOKEN`.
+- Gateway must not hold `JWT_SECRET`, `GUARDRAILS_API_KEY`, `JEV_API_KEY`, or user tables. Introspect and guardrail checks use `INTERNAL_AUTH_TOKEN`.
 - `packages/*` must not import `apps/*` or `services/*`.
 - **Fail closed** on missing credentials, invalid tokens, and cross-tenant access (401/403).
 - Chat rate limiter **fails closed** if Redis is down (503 `rate_limiter_unavailable`).
@@ -33,7 +33,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## API contracts
 
 - Update OpenAPI when you add or change HTTP routes.
-- `POST /v1/chat` is a **stub** (no provider). It requires auth, RBAC, rate limits, and input guardrails.
+- `POST /v1/chat` is a **stub** (no provider). It requires auth, RBAC, rate limits, input guardrails, and a thin Jev output check.
 - `/v1/health` is liveness. `/v1/ready` checks Postgres, Redis, auth, and guardrails.
 
 ## Docs and tests

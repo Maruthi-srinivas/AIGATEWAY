@@ -169,6 +169,10 @@ services:
       GUARDRAILS_API_KEY: ${GUARDRAILS_API_KEY:-}
       GUARDRAILS_MODERATION_THRESHOLD: ${GUARDRAILS_MODERATION_THRESHOLD:-0.7}
       GUARDRAILS_TIMEOUT_SECONDS: ${GUARDRAILS_TIMEOUT_SECONDS:-2}
+      JEV_API_KEY: ${JEV_API_KEY:-}
+      JEV_API_URL: ${JEV_API_URL:-https://api.typesafe.ai/v1/systemone}
+      JEV_MODEL: ${JEV_MODEL:-jev-latest}
+      JEV_TIMEOUT_SECONDS: ${JEV_TIMEOUT_SECONDS:-0.8}
     depends_on:
       postgres:
         condition: service_healthy
@@ -211,6 +215,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-insecure-jwt-secret-change-me}
       SEED_PASSWORD: ${SEED_PASSWORD:-changeme}
       SEED_HR_API_KEY: ${SEED_HR_API_KEY:-agt_demo_hr_local_docker_only_key}
+      JEV_API_KEY: ${JEV_API_KEY:-}
       SERVICE_NAME: test
     depends_on:
       gateway:

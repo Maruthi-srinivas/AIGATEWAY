@@ -54,6 +54,30 @@ class HttpGuardrailClient:
         response.raise_for_status()
         return GuardrailCheckResult.model_validate(response.json())
 
+    async def check_output(
+        self,
+        *,
+        tenant_id: str,
+        texts: list[GuardrailText],
+    ) -> GuardrailCheckResult:
+        try:
+            response = await self._client.post(
+                self._url("/internal/v1/check-output"),
+                headers=self._headers(),
+                json={
+                    "tenant_id": tenant_id,
+                    "texts": [item.model_dump() for item in texts],
+                },
+                timeout=self._settings.guardrails_timeout,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("guardrails output check failed")
+            raise GuardrailsUnavailableError() from exc
+        if response.status_code >= 500 or response.status_code == 401:
+            raise GuardrailsUnavailableError()
+        response.raise_for_status()
+        return GuardrailCheckResult.model_validate(response.json())
+
     async def get_policy(self, tenant_id: str) -> GuardrailPolicy:
         try:
             response = await self._client.get(

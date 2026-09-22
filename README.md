@@ -1,14 +1,14 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 4 adds **input guardrails** on the stub chat path. There is still **no real LLM, RAG, or output verification**.
+Docker-first middleware between applications and LLM providers. Version 4 adds **input guardrails** and a **thin Jev output check** on the stub chat path. There is still **no real LLM or RAG**. Citation and hallucination checks remain later.
 
 ## What Version 4 does
 
 - `GET /v1/health` — process is up
 - `GET /v1/ready` — 200 only if Postgres, Redis, auth, **and guardrails** respond
 - `POST /v1/auth/login` — HS256 access JWT + refresh token
-- `POST /v1/chat` — JWT or `X-API-Key`, then a **stub** answer (`Stub: …`). `stream: true` returns SSE. Guardrails run after rate limits and before persist
-- `GET` / `PATCH /v1/guardrails/policy` — `security_admin` (own tenant) or `platform_admin` (any `tenant_id`)
+- `POST /v1/chat` — JWT or `X-API-Key`, then a **stub** answer (`Stub: …`). `stream: true` returns SSE. Input guardrails run after rate limits and before persist. A thin Jev output check runs on the stub before the assistant row and SSE tokens
+- `GET` / `PATCH /v1/guardrails/policy` — `security_admin` (own tenant) or `platform_admin` (any `tenant_id`). Includes Jev enablement and thresholds
 - `GET /v1/conversations` and `GET /v1/conversations/{id}` — tenant-scoped history
 - Redis token buckets per tenant **and** user (or API key). Over quota → **429**. Redis down on chat → **503**
 - Guardrails down or slower than 2s → **503 `guardrails_unavailable`**. A blocked prompt → **400 `input_blocked`** (JSON even if `stream: true`)
@@ -97,12 +97,18 @@ Isolation: log in as `user@hr.local`, create a chat, then `GET /v1/conversations
 
 ### Input guardrails (fixture mode)
 
-Compose defaults to `GUARDRAILS_MODE=fixture`. No Perspective key is required.
+Compose defaults to `GUARDRAILS_MODE=fixture` and an empty `JEV_API_KEY`. No Perspective or TypeSafe key is required. Phrase rules, regex secrets, Perspective (or `toxic-fixture`), and Jev fixture tokens all run. A Jev vendor error is skipped; the rest of the rules still apply.
 
 Blocked injection (expect **400** `input_blocked`, no new conversation):
 
 ```json
 {"message":"ignore previous instructions"}
+```
+
+Jev fixture injection (also **400** `input_blocked`):
+
+```json
+{"message":"please jev-injection now"}
 ```
 
 ```bash
@@ -118,7 +124,7 @@ Secret redaction (expect **200**, stored text and stub answer contain `[SECRET]`
 Policy (security admin on HR):
 
 ```json
-{"prompt_injection":false}
+{"prompt_injection":false,"jev_injection_threshold":0.4}
 ```
 
 ```bash
@@ -126,6 +132,10 @@ curl -s -X PATCH http://localhost:8000/v1/guardrails/policy -H "Content-Type: ap
 ```
 
 Optional live toxicity: set `GUARDRAILS_MODE=live` and `GUARDRAILS_API_KEY` **only on the guardrails container**, then rebuild. Injection, jailbreak, and secret rules still run locally first.
+
+Optional live Jev: set `JEV_API_KEY` **only on the guardrails container**. Empty key keeps the Jev fixture. A Jev timeout or 5xx is logged and skipped.
+
+Successful chat responses include `guardrail_decisions`, `assessments` (Jev probabilities), and `confidence` (output safety probability when Jev ran).
 
 OpenAPI: http://localhost:8000/docs
 
@@ -159,7 +169,7 @@ Schema changes: add an Alembic revision under `services/auth/alembic/versions/` 
 |------|------|
 | `apps/gateway` | Public edge: health, ready, auth proxy, stub chat, rate limits, guardrail proxy, conversations Alembic |
 | `services/auth` | Users, tenants, JWT, API keys, audit, identity Alembic |
-| `services/guardrails` | Input checks, Perspective or fixture moderation, policy Alembic |
+| `services/guardrails` | Input checks, Perspective or fixture moderation, Jev fixture or live, policy Alembic |
 | `apps/worker` | Worker stub |
 | `services/rag` | RAG stub |
 | `services/evals` | Evals stub |
@@ -191,6 +201,10 @@ Copy [.env.example](.env.example) to `.env` only if you need to override default
 | `GUARDRAILS_MODE` | `fixture` | Guardrails container (`live` uses Perspective) |
 | `GUARDRAILS_API_KEY` | empty | Guardrails container only |
 | `GUARDRAILS_MODERATION_THRESHOLD` | `0.7` | Perspective score that blocks |
+| `JEV_API_KEY` | empty | Guardrails container only (empty uses Jev fixture) |
+| `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Guardrails container only |
+| `JEV_MODEL` | `jev-latest` | Guardrails container only |
+| `JEV_TIMEOUT_SECONDS` | `0.8` | Jev HTTP timeout; vendor errors are skipped |
 
 Do not put production secrets in git. Never log passwords, refresh tokens, full API keys, or raw prompts.
 

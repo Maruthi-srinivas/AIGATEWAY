@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from collections.abc import AsyncIterator
@@ -16,10 +17,12 @@ from aigateway.contracts import (
     ConversationList,
     ConversationNotFoundError,
     ConversationSummary,
+    GuardrailCheckResult,
     GuardrailDecision,
     GuardrailsUnavailableError,
     GuardrailText,
     InputBlockedError,
+    JevAssessment,
     MessageOut,
     RateLimitedError,
     RateLimiterUnavailableError,
@@ -39,6 +42,36 @@ from aigateway.telemetry import correlation_id_var, get_logger
 logger = get_logger(__name__)
 
 CHAT_ROLES_READ = {"app_user", "service_account", "security_admin", "platform_admin", "viewer"}
+OUTPUT_REFUSAL = "The assistant response was blocked by output guardrails."
+
+
+def _output_confidence(assessments: list[JevAssessment]) -> float | None:
+    for item in assessments:
+        if item.stage == "output" and item.question_id == "safety" and item.score is not None:
+            return item.score
+    return None
+
+
+def _merge_checks(
+    inbound: GuardrailCheckResult,
+    outbound: GuardrailCheckResult,
+    raw_answer: str,
+) -> tuple[str, list[GuardrailDecision], list[JevAssessment], float | None]:
+    answer = OUTPUT_REFUSAL if outbound.decision == "block" else raw_answer
+    decisions = [*inbound.decisions, *outbound.decisions]
+    assessments = [*inbound.assessments, *outbound.assessments]
+    return answer, decisions, assessments, _output_confidence(assessments)
+
+
+async def _tokens_from_text(text: str, delay_ms: float) -> AsyncIterator[str]:
+    words = text.split()
+    if not words:
+        return
+    for index, word in enumerate(words):
+        if delay_ms:
+            await asyncio.sleep(delay_ms / 1000)
+        chunk = word if index == len(words) - 1 else f"{word} "
+        yield sse_event("token", {"text": chunk})
 
 
 async def audit_chat(
@@ -226,23 +259,16 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     )
     history = [{"role": item.role, "content": item.content} for item in check.texts]
     cid = correlation_id_var.get()
-    decisions = check.decisions
-    if body.stream:
-        return StreamingResponse(
-            _stream_answer(
-                request,
-                ctx,
-                conversation=conversation,
-                user_message=user_message,
-                history=history,
-                tenant_id=tenant_id,
-                correlation_id=cid,
-                decisions=decisions,
-            ),
-            media_type="text/event-stream",
-            headers=limit.headers(),
+    raw_answer = await request.app.state.llm_client.generate(history)
+    try:
+        outbound = await request.app.state.guardrail_client.check_output(
+            tenant_id=tenant_id,
+            texts=[GuardrailText(role="assistant", content=raw_answer)],
         )
-    answer = await request.app.state.llm_client.generate(history)
+    except GuardrailsUnavailableError as exc:
+        await audit_chat(request, ctx, status_code=503, success=False)
+        raise exc
+    answer, decisions, assessments, confidence = _merge_checks(check, outbound, raw_answer)
     assistant = await request.app.state.chat_repo.add_message(
         conversation_id=conversation.id,
         tenant_id=uuid.UUID(tenant_id),
@@ -260,30 +286,45 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         ctx,
         status_code=200,
         success=True,
-        metadata={"conversation_id": str(conversation.id)},
+        metadata={
+            "conversation_id": str(conversation.id),
+            "output_blocked": outbound.decision == "block",
+        },
     )
     payload = ChatResponse(
         answer=answer,
         citations=[],
-        confidence=None,
+        confidence=confidence,
         trace_id=cid,
         conversation_id=str(conversation.id),
         message_id=str(assistant.id),
         guardrail_decisions=decisions,
+        assessments=assessments,
     )
+    if body.stream:
+        return StreamingResponse(
+            _stream_answer(
+                request,
+                conversation=conversation,
+                user_message=user_message,
+                answer=answer,
+                payload=payload,
+                correlation_id=cid,
+            ),
+            media_type="text/event-stream",
+            headers=limit.headers(),
+        )
     return JSONResponse(payload.model_dump(), headers=limit.headers())
 
 
 async def _stream_answer(
     request: Request,
-    ctx: AuthContext,
     *,
     conversation: ConversationRecord,
     user_message: MessageRecord,
-    history: list[dict[str, str]],
-    tenant_id: str,
+    answer: str,
+    payload: ChatResponse,
     correlation_id: str | None,
-    decisions: list[GuardrailDecision],
 ) -> AsyncIterator[str]:
     yield sse_event(
         "meta",
@@ -293,46 +334,16 @@ async def _stream_answer(
             "correlation_id": correlation_id,
         },
     )
-    collected: list[str] = []
 
     async def tokens() -> AsyncIterator[str]:
-        async for token in request.app.state.llm_client.stream(history):
-            collected.append(token)
-            yield sse_event("token", {"text": token})
+        delay = request.app.state.settings.stub_stream_delay_ms
+        async for event in _tokens_from_text(answer, delay):
+            yield event
 
     try:
         async for chunk in with_heartbeat(tokens()):
             yield chunk
-        answer = "".join(collected)
-        assistant = await request.app.state.chat_repo.add_message(
-            conversation_id=conversation.id,
-            tenant_id=uuid.UUID(tenant_id),
-            user_id=None,
-            role="assistant",
-            content=answer,
-        )
-        await request.app.state.session_cache.set(
-            tenant_id,
-            str(conversation.id),
-            [*history, {"role": "assistant", "content": answer}],
-        )
-        await audit_chat(
-            request,
-            ctx,
-            status_code=200,
-            success=True,
-            metadata={"conversation_id": str(conversation.id)},
-        )
-        done = ChatResponse(
-            answer=answer,
-            citations=[],
-            confidence=None,
-            trace_id=correlation_id,
-            conversation_id=str(conversation.id),
-            message_id=str(assistant.id),
-            guardrail_decisions=decisions,
-        )
-        yield sse_event("done", done.model_dump())
+        yield sse_event("done", payload.model_dump())
     except GeneratorExit:
         logger.info("chat stream disconnected conversation_id=%s", conversation.id)
         return

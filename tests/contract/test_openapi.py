@@ -24,3 +24,9 @@ def test_openapi_contains_version_4_paths() -> None:
     schemes = spec["components"]["securitySchemes"]
     assert "BearerAuth" in schemes
     assert "ApiKeyAuth" in schemes
+    policy = spec["components"]["schemas"]["GuardrailPolicy"]["properties"]
+    assert "jev_enabled" in policy
+    assert "jev_injection_threshold" in policy
+    chat = spec["components"]["schemas"]["ChatResponse"]["properties"]
+    assert "assessments" in chat
+    assert "confidence" in chat

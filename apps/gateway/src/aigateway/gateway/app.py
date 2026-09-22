@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from aigateway.config import GatewaySettings
 from aigateway.contracts import (
     ChatRequest,
+    ChatResponse,
     ConversationDetail,
     ConversationList,
     GuardrailPolicy,
@@ -141,6 +142,7 @@ def create_app(
     @app.post(
         "/v1/chat",
         tags=["chat"],
+        response_model=ChatResponse,
         responses={
             200: {"description": "Stub chat response"},
             400: {"description": "Invalid request"},

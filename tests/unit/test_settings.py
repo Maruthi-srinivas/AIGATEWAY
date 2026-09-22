@@ -47,3 +47,6 @@ def test_guardrails_settings_default_to_fixture(monkeypatch: pytest.MonkeyPatch)
     assert settings.guardrails_mode == "fixture"
     assert settings.guardrails_moderation_threshold == 0.7
     assert settings.guardrails_timeout_seconds == 2.0
+    assert settings.jev_api_key == ""
+    assert settings.jev_model == "jev-latest"
+    assert settings.jev_timeout_seconds == 0.8

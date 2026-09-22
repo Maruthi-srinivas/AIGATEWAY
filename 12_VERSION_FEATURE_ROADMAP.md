@@ -134,6 +134,7 @@ Real RAG and real LLM provider calls can still be stubbed. Guardrails land next.
 - Input PII detection (flag or block, configurable)
 - Per-tenant policy flags (enable/disable each check)
 - Structured guardrail result: `allow | redact | block`, rule id, score, reason
+- TypeSafe Jev calibrated scores on input (injection, jailbreak, toxicity, PII, risk, route) plus a thin output toxicity/PII/confidence check. Citation and hallucination checks remain Version 7.
 - Security event emission (in-process until Kafka in Version 8)
 
 ### Done when
@@ -144,7 +145,7 @@ Real RAG and real LLM provider calls can still be stubbed. Guardrails land next.
 
 ### Out of scope
 
-Output hallucination checks (Version 7). Retrieval RBAC (Version 6).
+Full output hallucination and citation checks (Version 7). Retrieval RBAC (Version 6). Jev route labels are reported only; model/tool routing is Version 11.
 
 ---
 
@@ -208,7 +209,7 @@ Hybrid BM25 + rerank (Version 6). Multi-provider routing (Version 11).
 - Hallucination / unsupported-claim detection
 - Citation verification (every factual claim maps to a retrieved chunk)
 - Output PII redaction
-- Confidence scoring
+- Confidence scoring (thin Jev safety probability already on the chat envelope; this version adds groundedness)
 - Block or rewrite when verification fails
 - Final response envelope: answer, citations, confidence, guardrail decisions
 

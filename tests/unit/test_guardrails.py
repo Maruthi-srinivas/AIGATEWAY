@@ -75,3 +75,4 @@ async def test_evaluate_aggregates_block_over_redact() -> None:
     )
     assert result.decision == "block"
     assert {item.rule_id for item in result.decisions} >= {"prompt_injection", "pii"}
+    assert result.assessments

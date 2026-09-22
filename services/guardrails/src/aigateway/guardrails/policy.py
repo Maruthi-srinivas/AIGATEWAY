@@ -33,6 +33,14 @@ def _to_policy(row: TenantPolicy) -> GuardrailPolicy:
         pii=row.pii,
         pii_action=row.pii_action,  # type: ignore[arg-type]
         max_input_chars=row.max_input_chars,
+        jev_enabled=row.jev_enabled,
+        jev_injection_threshold=row.jev_injection_threshold,
+        jev_jailbreak_threshold=row.jev_jailbreak_threshold,
+        jev_toxicity_threshold=row.jev_toxicity_threshold,
+        jev_pii_threshold=row.jev_pii_threshold,
+        jev_risk_threshold=row.jev_risk_threshold,
+        jev_output_toxicity_threshold=row.jev_output_toxicity_threshold,
+        jev_output_pii_threshold=row.jev_output_pii_threshold,
     )
 
 
@@ -61,6 +69,14 @@ async def patch_policy(
             pii=current.pii,
             pii_action=current.pii_action,
             max_input_chars=current.max_input_chars,
+            jev_enabled=current.jev_enabled,
+            jev_injection_threshold=current.jev_injection_threshold,
+            jev_jailbreak_threshold=current.jev_jailbreak_threshold,
+            jev_toxicity_threshold=current.jev_toxicity_threshold,
+            jev_pii_threshold=current.jev_pii_threshold,
+            jev_risk_threshold=current.jev_risk_threshold,
+            jev_output_toxicity_threshold=current.jev_output_toxicity_threshold,
+            jev_output_pii_threshold=current.jev_output_pii_threshold,
         )
         session.add(row)
     data = update.model_dump(exclude_unset=True)

@@ -2,7 +2,7 @@
 
 ## Version 4 (current)
 
-The gateway is the only public port. Auth issues JWTs. After rate limits, the gateway calls `services/guardrails`. Chat is still a stub LLM. Unsafe prompts never reach the stub.
+The gateway is the only public port. Auth issues JWTs. After rate limits, the gateway calls `services/guardrails` for input checks (phrase rules, Perspective or fixture, and Jev). Chat is still a stub LLM. After the stub, the gateway calls guardrails again for a thin output check. Unsafe prompts never reach the stub. Unsafe stub text is replaced with a refusal before persist and SSE tokens.
 
 ```mermaid
 sequenceDiagram
@@ -42,9 +42,17 @@ sequenceDiagram
             Gateway-->>Client: 400 input_blocked
         else allow or redact
             Gateway->>Postgres: insert conversation and user message
-            Gateway->>Gateway: stub tokens
-            Gateway->>Postgres: insert assistant message
-            Gateway-->>Client: 200 JSON or SSE with decisions
+            Gateway->>Gateway: stub generate
+            Gateway->>Guardrails: POST /internal/v1/check-output
+            alt output check down
+                Gateway-->>Client: 503 guardrails_unavailable
+            else output blocks
+                Gateway->>Postgres: insert refusal
+                Gateway-->>Client: 200 JSON or SSE with assessments
+            else allow
+                Gateway->>Postgres: insert assistant message
+                Gateway-->>Client: 200 JSON or SSE with decisions and assessments
+            end
         end
     end
 ```

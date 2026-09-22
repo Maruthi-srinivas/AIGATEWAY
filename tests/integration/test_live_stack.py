@@ -71,6 +71,7 @@ def test_live_chat_authenticated_stub() -> None:
     assert body["answer"].startswith("Stub:")
     assert body["conversation_id"]
     assert isinstance(body["guardrail_decisions"], list)
+    assert isinstance(body["assessments"], list)
     listed = httpx.get(
         f"{GATEWAY_URL}/v1/conversations",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},

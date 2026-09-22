@@ -38,6 +38,13 @@ class Guardrail(Protocol):
         texts: list[GuardrailText],
     ) -> GuardrailCheckResult: ...
 
+    async def check_output(
+        self,
+        *,
+        tenant_id: str,
+        texts: list[GuardrailText],
+    ) -> GuardrailCheckResult: ...
+
 
 @runtime_checkable
 class Retriever(Protocol):
