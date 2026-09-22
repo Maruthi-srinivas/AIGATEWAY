@@ -6,7 +6,9 @@ from typing import Protocol, runtime_checkable
 from aigateway.contracts.models import (
     AuthContext,
     EvaluationResult,
+    GuardrailCheckResult,
     GuardrailDecision,
+    GuardrailText,
     RetrievedChunk,
 )
 
@@ -28,6 +30,13 @@ class Guardrail(Protocol):
         text: str,
         context: AuthContext | None = None,
     ) -> GuardrailDecision: ...
+
+    async def check_input(
+        self,
+        *,
+        tenant_id: str,
+        texts: list[GuardrailText],
+    ) -> GuardrailCheckResult: ...
 
 
 @runtime_checkable

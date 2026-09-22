@@ -48,6 +48,47 @@ class Citation(BaseModel):
     chunk_id: str
 
 
+class GuardrailDecision(BaseModel):
+    decision: Literal["allow", "redact", "block"]
+    rule_id: str
+    score: float | None = None
+    reason: str | None = None
+
+
+class GuardrailText(BaseModel):
+    role: str
+    content: str
+
+
+class GuardrailCheckResult(BaseModel):
+    decision: Literal["allow", "redact", "block"]
+    decisions: list[GuardrailDecision] = Field(default_factory=list)
+    texts: list[GuardrailText] = Field(default_factory=list)
+
+
+class GuardrailPolicy(BaseModel):
+    tenant_id: str
+    prompt_injection: bool = True
+    jailbreak: bool = True
+    moderation: bool = True
+    token_limit: bool = True
+    pii: bool = True
+    pii_action: Literal["redact", "block"] = "redact"
+    max_input_chars: int = Field(default=4000, ge=1, le=8000)
+
+
+class GuardrailPolicyUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_injection: bool | None = None
+    jailbreak: bool | None = None
+    moderation: bool | None = None
+    token_limit: bool | None = None
+    pii: bool | None = None
+    pii_action: Literal["redact", "block"] | None = None
+    max_input_chars: int | None = Field(default=None, ge=1, le=8000)
+
+
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
@@ -55,6 +96,7 @@ class ChatResponse(BaseModel):
     trace_id: str | None = None
     conversation_id: str | None = None
     message_id: str | None = None
+    guardrail_decisions: list[GuardrailDecision] = Field(default_factory=list)
 
 
 class ConversationSummary(BaseModel):
@@ -82,13 +124,6 @@ class MessageOut(BaseModel):
 
 class ConversationDetail(ConversationSummary):
     messages: list[MessageOut] = Field(default_factory=list)
-
-
-class GuardrailDecision(BaseModel):
-    decision: Literal["allow", "redact", "block"]
-    rule_id: str
-    score: float | None = None
-    reason: str | None = None
 
 
 class RetrievedChunk(BaseModel):

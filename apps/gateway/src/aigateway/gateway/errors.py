@@ -8,6 +8,8 @@ from aigateway.contracts import (
     AuthenticationError,
     AuthorizationError,
     ConversationNotFoundError,
+    GuardrailsUnavailableError,
+    InputBlockedError,
     PayloadTooLargeError,
     RateLimitedError,
     RateLimiterUnavailableError,
@@ -16,8 +18,8 @@ from aigateway.contracts import (
 from aigateway.telemetry import correlation_id_var
 
 
-def error_body(code: str, detail: str) -> dict[str, str]:
-    payload = {"code": code, "detail": detail}
+def error_body(code: str, detail: str) -> dict:
+    payload: dict = {"code": code, "detail": detail}
     cid = correlation_id_var.get()
     if cid:
         payload["correlation_id"] = cid
@@ -30,10 +32,14 @@ def json_error(
     detail: str,
     *,
     headers: dict[str, str] | None = None,
+    extra: dict | None = None,
 ) -> JSONResponse:
+    content = error_body(code, detail)
+    if extra:
+        content.update(extra)
     return JSONResponse(
         status_code=status_code,
-        content=error_body(code, detail),
+        content=content,
         headers=headers,
     )
 
@@ -79,6 +85,22 @@ def register_exception_handlers(app) -> None:
 
     @app.exception_handler(RateLimiterUnavailableError)
     async def _rl_down(_, exc: RateLimiterUnavailableError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
+    @app.exception_handler(InputBlockedError)
+    async def _input_blocked(_, exc: InputBlockedError) -> JSONResponse:
+        decisions = [
+            item.model_dump() if hasattr(item, "model_dump") else item for item in exc.decisions
+        ]
+        return json_error(
+            exc.status_code,
+            exc.code,
+            exc.detail,
+            extra={"guardrail_decisions": decisions},
+        )
+
+    @app.exception_handler(GuardrailsUnavailableError)
+    async def _guardrails_down(_, exc: GuardrailsUnavailableError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
 
     @app.exception_handler(RequestValidationError)

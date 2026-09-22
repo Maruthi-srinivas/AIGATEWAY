@@ -51,6 +51,7 @@ def test_chat_returns_stub_when_authenticated() -> None:
     body = response.json()
     assert body["answer"].startswith("Stub:")
     assert body["conversation_id"]
+    assert body["guardrail_decisions"] == []
     assert "correlation_id" not in body
     assert client_auth.audits
     assert client_auth.audits[-1]["action"] == "chat.attempt"

@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from aigateway.contracts.errors import AuthenticationError
+from aigateway.contracts.errors import AuthenticationError, GuardrailsUnavailableError
 from aigateway.contracts.models import (
     AuthContext,
     EvaluationResult,
+    GuardrailCheckResult,
     GuardrailDecision,
+    GuardrailPolicy,
+    GuardrailPolicyUpdate,
+    GuardrailText,
     RetrievedChunk,
 )
 
@@ -41,6 +45,17 @@ class FakeAuthProvider:
 
 
 class FakeGuardrail:
+    def __init__(
+        self,
+        *,
+        unavailable: bool = False,
+        result: GuardrailCheckResult | None = None,
+    ) -> None:
+        self.unavailable = unavailable
+        self.result = result
+        self.calls: list[dict] = []
+        self.policies: dict[str, GuardrailPolicy] = {}
+
     async def check(
         self,
         text: str,
@@ -53,6 +68,28 @@ class FakeGuardrail:
             score=1.0,
             reason="v1 fake",
         )
+
+    async def check_input(
+        self,
+        *,
+        tenant_id: str,
+        texts: list[GuardrailText],
+    ) -> GuardrailCheckResult:
+        self.calls.append({"tenant_id": tenant_id, "texts": texts})
+        if self.unavailable:
+            raise GuardrailsUnavailableError()
+        if self.result is not None:
+            return self.result
+        return GuardrailCheckResult(decision="allow", decisions=[], texts=list(texts))
+
+    async def get_policy(self, tenant_id: str) -> GuardrailPolicy:
+        return self.policies.get(tenant_id, GuardrailPolicy(tenant_id=tenant_id))
+
+    async def patch_policy(self, tenant_id: str, update: GuardrailPolicyUpdate) -> GuardrailPolicy:
+        current = await self.get_policy(tenant_id)
+        updated = current.model_copy(update=update.model_dump(exclude_unset=True))
+        self.policies[tenant_id] = updated
+        return updated
 
 
 class FakeRetriever:

@@ -2,6 +2,7 @@ from aigateway.contracts import (
     AuthProvider,
     Evaluator,
     Guardrail,
+    GuardrailText,
     LLMClient,
     Retriever,
 )
@@ -28,3 +29,11 @@ async def test_fake_llm_echoes_stub() -> None:
     assert await client.generate(messages) == "Stub: hello"
     chunks = [part async for part in client.stream(messages)]
     assert "".join(chunks) == "Stub: hello"
+
+
+async def test_fake_guardrail_allows_by_default() -> None:
+    guardrail = FakeGuardrail()
+    texts = [GuardrailText(role="user", content="hello")]
+    result = await guardrail.check_input(tenant_id="t1", texts=texts)
+    assert result.decision == "allow"
+    assert result.texts == texts

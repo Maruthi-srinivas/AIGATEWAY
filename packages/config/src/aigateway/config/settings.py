@@ -32,6 +32,8 @@ class GatewaySettings(ServiceSettings):
     chat_message_max_chars: int = Field(default=8000, ge=1)
     session_cache_ttl_seconds: int = Field(default=86400, ge=60)
     session_cache_message_limit: int = Field(default=20, ge=1)
+    guardrails_base_url: str
+    guardrails_timeout: float = Field(default=2.0, ge=0.1)
 
 
 class AuthSettings(ServiceSettings):
@@ -48,3 +50,17 @@ class AuthSettings(ServiceSettings):
     seed_password: str = "changeme"
     seed_hr_api_key: str = "agt_demo_hr_local_docker_only_key"
     seed_eng_api_key: str = "agt_demo_eng_local_docker_only_key"
+
+
+class GuardrailsSettings(ServiceSettings):
+    """Guardrails process settings. Vendor keys never live on the gateway."""
+
+    service_name: str = "guardrails"
+    postgres_dsn: str
+    internal_auth_token: str
+    guardrails_mode: str = "fixture"
+    guardrails_api_url: str = "https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze"
+    guardrails_api_key: str = ""
+    guardrails_moderation_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    guardrails_timeout_seconds: float = Field(default=2.0, ge=0.1)
+    postgres_connect_timeout: float = Field(default=2.0, ge=0.1)

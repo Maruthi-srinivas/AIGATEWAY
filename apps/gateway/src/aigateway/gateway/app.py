@@ -9,13 +9,21 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 
 from aigateway.config import GatewaySettings
-from aigateway.contracts import ChatRequest, ConversationDetail, ConversationList
+from aigateway.contracts import (
+    ChatRequest,
+    ConversationDetail,
+    ConversationList,
+    GuardrailPolicy,
+    GuardrailPolicyUpdate,
+)
 from aigateway.gateway.auth_client import HttpAuthClient
 from aigateway.gateway.chat import handle_chat, handle_get_conversation, handle_list_conversations
 from aigateway.gateway.db import close_engine, init_engine
 from aigateway.gateway.deps import require_auth
 from aigateway.gateway.errors import register_exception_handlers
+from aigateway.gateway.guardrail_client import HttpGuardrailClient
 from aigateway.gateway.middleware import BodySizeLimitMiddleware, CorrelationIdMiddleware
+from aigateway.gateway.policy import handle_get_policy, handle_patch_policy
 from aigateway.gateway.rate_limit import RedisTokenBucket
 from aigateway.gateway.readiness import ReadinessChecker
 from aigateway.gateway.repository import SqlChatRepository
@@ -34,7 +42,9 @@ def create_app(
     check_postgres: CheckFn | None = None,
     check_redis: CheckFn | None = None,
     check_auth: CheckFn | None = None,
+    check_guardrails: CheckFn | None = None,
     auth_client: HttpAuthClient | None = None,
+    guardrail_client=None,
     rate_limiter=None,
     chat_repo=None,
     llm_client=None,
@@ -46,6 +56,7 @@ def create_app(
         check_postgres=check_postgres,
         check_redis=check_redis,
         check_auth=check_auth,
+        check_guardrails=check_guardrails,
     )
 
     @asynccontextmanager
@@ -54,6 +65,8 @@ def create_app(
         app.state.http_client = http_client
         if app.state.auth_client is None:
             app.state.auth_client = HttpAuthClient(settings, http_client)
+        if app.state.guardrail_client is None:
+            app.state.guardrail_client = HttpGuardrailClient(settings, http_client)
         yield
         if app.state.redis is not None:
             await app.state.redis.aclose()
@@ -62,7 +75,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.3.0",
+        version="0.4.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
@@ -72,6 +85,7 @@ def create_app(
     app.state.settings = settings
     app.state.checker = checker
     app.state.auth_client = auth_client
+    app.state.guardrail_client = guardrail_client
     app.state.rate_limiter = rate_limiter
     app.state.chat_repo = chat_repo
     app.state.llm_client = llm_client
@@ -111,13 +125,15 @@ def create_app(
             "postgres": status.postgres,
             "redis": status.redis,
             "auth": status.auth,
+            "guardrails": status.guardrails,
         }
         if not status.ok:
             logger.warning(
-                "readiness failed postgres=%s redis=%s auth=%s",
+                "readiness failed postgres=%s redis=%s auth=%s guardrails=%s",
                 status.postgres,
                 status.redis,
                 status.auth,
+                status.guardrails,
             )
             return JSONResponse(status_code=503, content=body)
         return JSONResponse(status_code=200, content=body)
@@ -132,11 +148,23 @@ def create_app(
             403: {"description": "Forbidden"},
             404: {"description": "Conversation not found"},
             429: {"description": "Rate limited"},
-            503: {"description": "Rate limiter unavailable"},
+            503: {"description": "Rate limiter or guardrails unavailable"},
         },
     )
     async def chat(request: Request, body: ChatRequest):
         return await handle_chat(request, body)
+
+    @app.get("/v1/guardrails/policy", tags=["guardrails"])
+    async def get_policy(request: Request, tenant_id: str | None = None) -> GuardrailPolicy:
+        return await handle_get_policy(request, tenant_id)
+
+    @app.patch("/v1/guardrails/policy", tags=["guardrails"])
+    async def patch_policy(
+        request: Request,
+        body: GuardrailPolicyUpdate,
+        tenant_id: str | None = None,
+    ) -> GuardrailPolicy:
+        return await handle_patch_policy(request, body, tenant_id)
 
     @app.get("/v1/conversations", tags=["chat"])
     async def list_conversations(

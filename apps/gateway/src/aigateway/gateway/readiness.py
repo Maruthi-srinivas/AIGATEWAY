@@ -19,10 +19,11 @@ class ReadinessStatus:
     postgres: bool
     redis: bool
     auth: bool
+    guardrails: bool
 
     @property
     def ok(self) -> bool:
-        return self.postgres and self.redis and self.auth
+        return self.postgres and self.redis and self.auth and self.guardrails
 
 
 async def default_check_postgres(dsn: str, timeout: float) -> bool:
@@ -67,6 +68,16 @@ async def default_check_auth(base_url: str, timeout: float) -> bool:
         return False
 
 
+async def default_check_guardrails(base_url: str, timeout: float) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{base_url.rstrip('/')}/health")
+            return response.status_code == 200
+    except Exception:
+        logger.warning("guardrails readiness check failed", exc_info=True)
+        return False
+
+
 class ReadinessChecker:
     def __init__(
         self,
@@ -75,19 +86,27 @@ class ReadinessChecker:
         check_postgres: CheckFn | None = None,
         check_redis: CheckFn | None = None,
         check_auth: CheckFn | None = None,
+        check_guardrails: CheckFn | None = None,
     ) -> None:
         self._settings = settings
         self._check_postgres = check_postgres
         self._check_redis = check_redis
         self._check_auth = check_auth
+        self._check_guardrails = check_guardrails
 
     async def check(self) -> ReadinessStatus:
-        postgres_ok, redis_ok, auth_ok = await asyncio.gather(
+        postgres_ok, redis_ok, auth_ok, guardrails_ok = await asyncio.gather(
             self._postgres(),
             self._redis(),
             self._auth(),
+            self._guardrails(),
         )
-        return ReadinessStatus(postgres=postgres_ok, redis=redis_ok, auth=auth_ok)
+        return ReadinessStatus(
+            postgres=postgres_ok,
+            redis=redis_ok,
+            auth=auth_ok,
+            guardrails=guardrails_ok,
+        )
 
     async def _postgres(self) -> bool:
         if self._check_postgres is not None:
@@ -109,3 +128,11 @@ class ReadinessChecker:
         if self._check_auth is not None:
             return await self._check_auth()
         return await default_check_auth(self._settings.auth_base_url, self._settings.auth_timeout)
+
+    async def _guardrails(self) -> bool:
+        if self._check_guardrails is not None:
+            return await self._check_guardrails()
+        return await default_check_guardrails(
+            self._settings.guardrails_base_url,
+            self._settings.guardrails_timeout,
+        )

@@ -95,6 +95,7 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AUTH_BASE_URL: http://auth:8000
+      GUARDRAILS_BASE_URL: http://guardrails:8000
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
       RATE_LIMIT_TENANT_PER_MINUTE: ${RATE_LIMIT_TENANT_PER_MINUTE:-60}
       RATE_LIMIT_USER_PER_MINUTE: ${RATE_LIMIT_USER_PER_MINUTE:-20}
@@ -110,6 +111,8 @@ services:
       migrate:
         condition: service_completed_successfully
       auth:
+        condition: service_healthy
+      guardrails:
         condition: service_healthy
     restart: unless-stopped
 
@@ -159,6 +162,18 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HOST: 0.0.0.0
       PORT: "8000"
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
+      INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
+      GUARDRAILS_MODE: ${GUARDRAILS_MODE:-fixture}
+      GUARDRAILS_API_URL: ${GUARDRAILS_API_URL:-https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze}
+      GUARDRAILS_API_KEY: ${GUARDRAILS_API_KEY:-}
+      GUARDRAILS_MODERATION_THRESHOLD: ${GUARDRAILS_MODERATION_THRESHOLD:-0.7}
+      GUARDRAILS_TIMEOUT_SECONDS: ${GUARDRAILS_TIMEOUT_SECONDS:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   evals:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncIterator
 
@@ -15,6 +16,10 @@ from aigateway.contracts import (
     ConversationList,
     ConversationNotFoundError,
     ConversationSummary,
+    GuardrailDecision,
+    GuardrailsUnavailableError,
+    GuardrailText,
+    InputBlockedError,
     MessageOut,
     RateLimitedError,
     RateLimiterUnavailableError,
@@ -88,16 +93,6 @@ def _message_out(row: MessageRecord) -> MessageOut:
     )
 
 
-async def _history(request: Request, tenant_id: str, conversation_id: str) -> list[dict[str, str]]:
-    rows = await request.app.state.chat_repo.list_messages(
-        uuid.UUID(conversation_id),
-        limit=request.app.state.settings.session_cache_message_limit,
-    )
-    messages = [{"role": row.role, "content": row.content} for row in rows]
-    await request.app.state.session_cache.set(tenant_id, conversation_id, messages)
-    return messages
-
-
 async def resolve_write_conversation(
     request: Request,
     ctx: AuthContext,
@@ -150,42 +145,88 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc
 
-    try:
-        conversation = await resolve_write_conversation(
-            request,
-            ctx,
-            tenant_id=tenant_id,
-            conversation_id=body.conversation_id,
-            title=body.message,
+    conversation: ConversationRecord | None = None
+    history_rows: list[MessageRecord] = []
+    if body.conversation_id:
+        try:
+            conversation = await resolve_write_conversation(
+                request,
+                ctx,
+                tenant_id=tenant_id,
+                conversation_id=body.conversation_id,
+                title=body.message,
+            )
+        except ConversationNotFoundError:
+            await audit_chat(
+                request,
+                ctx,
+                status_code=404,
+                success=False,
+                metadata={"conversation_id": body.conversation_id},
+            )
+            raise
+        except AuthorizationError:
+            await audit_chat(
+                request,
+                ctx,
+                status_code=403,
+                success=False,
+                metadata={"conversation_id": body.conversation_id},
+            )
+            raise
+        history_rows = await request.app.state.chat_repo.list_messages(
+            conversation.id,
+            limit=request.app.state.settings.session_cache_message_limit,
         )
-    except ConversationNotFoundError:
-        await audit_chat(
-            request,
-            ctx,
-            status_code=404,
-            success=False,
-            metadata={"conversation_id": body.conversation_id},
-        )
-        raise
-    except AuthorizationError:
-        await audit_chat(
-            request,
-            ctx,
-            status_code=403,
-            success=False,
-            metadata={"conversation_id": body.conversation_id},
-        )
-        raise
 
+    texts = [GuardrailText(role=row.role, content=row.content) for row in history_rows]
+    texts.append(GuardrailText(role="user", content=body.message))
+    try:
+        check = await request.app.state.guardrail_client.check_input(
+            tenant_id=tenant_id,
+            texts=texts,
+        )
+    except GuardrailsUnavailableError as exc:
+        await audit_chat(request, ctx, status_code=503, success=False)
+        raise exc
+
+    if check.decision == "block":
+        digest = hashlib.sha256(body.message.encode("utf-8")).hexdigest()
+        await request.app.state.auth_client.write_audit(
+            {
+                "action": "guardrail.input",
+                "resource": "/v1/chat",
+                "success": False,
+                "status_code": 400,
+                "actor_user_id": ctx.user_id,
+                "tenant_id": tenant_id,
+                "actor_key_prefix": ctx.key_prefix,
+                "metadata": {
+                    "prompt_sha256": digest,
+                    "conversation_id": body.conversation_id,
+                    "decisions": [item.model_dump() for item in check.decisions],
+                },
+            }
+        )
+        raise InputBlockedError(decisions=check.decisions)
+
+    masked_user = check.texts[-1].content if check.texts else body.message
+    if conversation is None:
+        conversation = await request.app.state.chat_repo.create_conversation(
+            tenant_id=uuid.UUID(tenant_id),
+            ctx=ctx,
+            title=masked_user,
+        )
     user_message = await request.app.state.chat_repo.add_message(
         conversation_id=conversation.id,
         tenant_id=uuid.UUID(tenant_id),
         user_id=uuid.UUID(ctx.user_id),
         role="user",
-        content=body.message,
+        content=masked_user,
     )
-    history = await _history(request, tenant_id, str(conversation.id))
+    history = [{"role": item.role, "content": item.content} for item in check.texts]
     cid = correlation_id_var.get()
+    decisions = check.decisions
     if body.stream:
         return StreamingResponse(
             _stream_answer(
@@ -196,6 +237,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
                 history=history,
                 tenant_id=tenant_id,
                 correlation_id=cid,
+                decisions=decisions,
             ),
             media_type="text/event-stream",
             headers=limit.headers(),
@@ -227,6 +269,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         trace_id=cid,
         conversation_id=str(conversation.id),
         message_id=str(assistant.id),
+        guardrail_decisions=decisions,
     )
     return JSONResponse(payload.model_dump(), headers=limit.headers())
 
@@ -240,6 +283,7 @@ async def _stream_answer(
     history: list[dict[str, str]],
     tenant_id: str,
     correlation_id: str | None,
+    decisions: list[GuardrailDecision],
 ) -> AsyncIterator[str]:
     yield sse_event(
         "meta",
@@ -286,6 +330,7 @@ async def _stream_answer(
             trace_id=correlation_id,
             conversation_id=str(conversation.id),
             message_id=str(assistant.id),
+            guardrail_decisions=decisions,
         )
         yield sse_event("done", done.model_dump())
     except GeneratorExit:

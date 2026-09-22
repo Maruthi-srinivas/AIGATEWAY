@@ -1,1 +1,1 @@
-"""Guardrails service stub."""
+"""Guardrails service."""

@@ -6,6 +6,7 @@ from aigateway.contracts import AuthContext, AuthorizationError
 from aigateway.telemetry import tenant_id_var, user_id_var
 
 CHAT_ROLES = {"app_user", "service_account", "security_admin", "platform_admin"}
+POLICY_ROLES = {"security_admin", "platform_admin"}
 PLATFORM_ADMIN = "platform_admin"
 
 
@@ -24,6 +25,11 @@ async def require_auth(request: Request) -> AuthContext:
 def require_chat_role(ctx: AuthContext) -> None:
     if ctx.role not in CHAT_ROLES:
         raise AuthorizationError("chat is not allowed for this role")
+
+
+def require_policy_role(ctx: AuthContext) -> None:
+    if ctx.role not in POLICY_ROLES:
+        raise AuthorizationError("policy access is forbidden")
 
 
 def effective_tenant_id(ctx: AuthContext, requested: str | None) -> str:

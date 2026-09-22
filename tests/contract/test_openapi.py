@@ -4,7 +4,7 @@ from aigateway.gateway.app import create_app
 from tests.helpers import FakeAuthClient, gateway_settings
 
 
-def test_openapi_contains_version_3_paths() -> None:
+def test_openapi_contains_version_4_paths() -> None:
     app = create_app(gateway_settings(), auth_client=FakeAuthClient())
     with TestClient(app) as client:
         spec = client.get("/openapi.json").json()
@@ -14,9 +14,13 @@ def test_openapi_contains_version_3_paths() -> None:
     assert "/v1/chat" in paths
     assert "/v1/conversations" in paths
     assert "/v1/conversations/{conversation_id}" in paths
+    assert "/v1/guardrails/policy" in paths
+    assert "get" in paths["/v1/guardrails/policy"]
+    assert "patch" in paths["/v1/guardrails/policy"]
     assert any(p.startswith("/v1/auth") for p in paths)
     assert "post" in paths["/v1/chat"]
     assert "get" in paths["/v1/conversations"]
+    assert spec["info"]["version"] == "0.4.0"
     schemes = spec["components"]["securitySchemes"]
     assert "BearerAuth" in schemes
     assert "ApiKeyAuth" in schemes

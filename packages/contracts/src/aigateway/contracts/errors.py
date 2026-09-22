@@ -82,3 +82,25 @@ class RateLimiterUnavailableError(Exception):
         self.code = "rate_limiter_unavailable"
         self.status_code = 503
         super().__init__(detail)
+
+
+class InputBlockedError(Exception):
+    def __init__(
+        self,
+        detail: str = "input blocked",
+        *,
+        decisions: list | None = None,
+    ) -> None:
+        self.detail = detail
+        self.code = "input_blocked"
+        self.status_code = 400
+        self.decisions = decisions or []
+        super().__init__(detail)
+
+
+class GuardrailsUnavailableError(Exception):
+    def __init__(self, detail: str = "guardrails unavailable") -> None:
+        self.detail = detail
+        self.code = "guardrails_unavailable"
+        self.status_code = 503
+        super().__init__(detail)

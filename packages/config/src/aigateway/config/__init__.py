@@ -1,3 +1,8 @@
-from aigateway.config.settings import AuthSettings, GatewaySettings, ServiceSettings
+from aigateway.config.settings import (
+    AuthSettings,
+    GatewaySettings,
+    GuardrailsSettings,
+    ServiceSettings,
+)
 
-__all__ = ["AuthSettings", "GatewaySettings", "ServiceSettings"]
+__all__ = ["AuthSettings", "GatewaySettings", "GuardrailsSettings", "ServiceSettings"]

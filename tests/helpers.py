@@ -6,7 +6,7 @@ from aigateway.contracts import AuthContext
 from aigateway.gateway.rate_limit import AllowAllRateLimiter
 from aigateway.gateway.repository import MemoryChatRepository
 from aigateway.gateway.session_cache import SessionCache
-from aigateway.testing import FakeAuthProvider, FakeLLMClient
+from aigateway.testing import FakeAuthProvider, FakeGuardrail, FakeLLMClient
 
 DEFAULT_USER_ID = "11111111-1111-1111-1111-111111111111"
 DEFAULT_TENANT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -34,6 +34,7 @@ def gateway_settings() -> GatewaySettings:
         postgres_dsn="postgresql://aigateway:aigateway@localhost:5432/aigateway",
         redis_url="redis://localhost:6379/0",
         auth_base_url="http://auth.example",
+        guardrails_base_url="http://guardrails.example",
         internal_auth_token="test-internal",
         stub_stream_delay_ms=0,
     )
@@ -45,5 +46,6 @@ def unit_chat_deps(**kwargs):
         "rate_limiter": kwargs.get("rate_limiter", AllowAllRateLimiter()),
         "chat_repo": kwargs.get("chat_repo", MemoryChatRepository()),
         "llm_client": kwargs.get("llm_client", FakeLLMClient()),
+        "guardrail_client": kwargs.get("guardrail_client", FakeGuardrail()),
         "session_cache": kwargs.get("session_cache", SessionCache(None, ttl_seconds=60, limit=20)),
     }

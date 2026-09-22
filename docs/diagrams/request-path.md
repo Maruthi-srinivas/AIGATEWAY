@@ -1,8 +1,8 @@
 # Request path
 
-## Version 3 (current)
+## Version 4 (current)
 
-The gateway is the only public port. Auth issues JWTs. Chat is a stub LLM with rate limits and persisted conversations.
+The gateway is the only public port. Auth issues JWTs. After rate limits, the gateway calls `services/guardrails`. Chat is still a stub LLM. Unsafe prompts never reach the stub.
 
 ```mermaid
 sequenceDiagram
@@ -10,6 +10,7 @@ sequenceDiagram
     participant Gateway
     participant Auth
     participant Redis
+    participant Guardrails
     participant Postgres
     Client->>Gateway: GET /v1/health
     Gateway-->>Client: 200 ok
@@ -17,6 +18,7 @@ sequenceDiagram
     Gateway->>Postgres: SELECT 1
     Gateway->>Redis: PING
     Gateway->>Auth: GET /health
+    Gateway->>Guardrails: GET /health
     Gateway-->>Client: 200 or 503
     Client->>Gateway: POST /v1/auth/login
     Gateway->>Auth: proxy login
@@ -32,10 +34,18 @@ sequenceDiagram
     else Redis down
         Gateway-->>Client: 503
     else allowed
-        Gateway->>Postgres: insert conversation and user message
-        Gateway->>Gateway: stub tokens
-        Gateway->>Postgres: insert assistant message
-        Gateway-->>Client: 200 JSON or SSE
+        Gateway->>Guardrails: POST /internal/v1/check
+        alt guardrails down
+            Gateway-->>Client: 503 guardrails_unavailable
+        else any rule blocks
+            Gateway->>Auth: audit SHA-256 plus decisions
+            Gateway-->>Client: 400 input_blocked
+        else allow or redact
+            Gateway->>Postgres: insert conversation and user message
+            Gateway->>Gateway: stub tokens
+            Gateway->>Postgres: insert assistant message
+            Gateway-->>Client: 200 JSON or SSE with decisions
+        end
     end
 ```
 
