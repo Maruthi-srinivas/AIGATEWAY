@@ -9,7 +9,7 @@ from aigateway.contracts.models import (
     GuardrailCheckResult,
     GuardrailDecision,
     GuardrailText,
-    RetrievedChunk,
+    RetrieveResult,
 )
 
 
@@ -53,7 +53,10 @@ class Retriever(Protocol):
         query: str,
         tenant_id: str,
         top_k: int = 8,
-    ) -> list[RetrievedChunk]: ...
+        *,
+        role: str = "app_user",
+        debug: bool = False,
+    ) -> RetrieveResult: ...
 
 
 @runtime_checkable

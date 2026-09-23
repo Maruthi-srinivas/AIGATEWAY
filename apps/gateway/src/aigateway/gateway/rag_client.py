@@ -10,7 +10,7 @@ from aigateway.contracts import (
     DocumentNotFoundError,
     DocumentOut,
     RagUnavailableError,
-    RetrievedChunk,
+    RetrieveResult,
 )
 from aigateway.telemetry import correlation_id_var, get_logger
 
@@ -37,13 +37,21 @@ class HttpRagClient:
         *,
         tenant_id: str,
         query: str,
+        role: str,
+        debug: bool = False,
         top_k: int = 8,
-    ) -> list[RetrievedChunk]:
+    ) -> RetrieveResult:
         try:
             response = await self._client.post(
                 self._url("/internal/v1/retrieve"),
                 headers=self._headers(),
-                json={"tenant_id": tenant_id, "query": query, "top_k": top_k},
+                json={
+                    "tenant_id": tenant_id,
+                    "query": query,
+                    "role": role,
+                    "top_k": top_k,
+                    "debug": debug,
+                },
                 timeout=self._settings.rag_timeout,
             )
         except httpx.HTTPError as exc:
@@ -52,8 +60,7 @@ class HttpRagClient:
         if response.status_code >= 500 or response.status_code == 401:
             raise RagUnavailableError()
         response.raise_for_status()
-        payload = response.json()
-        return [RetrievedChunk.model_validate(item) for item in payload.get("chunks", [])]
+        return RetrieveResult.model_validate(response.json())
 
     async def ingest(self, tenant_id: str, body: DocumentIngest, created_by: str) -> DocumentOut:
         return await self._json(

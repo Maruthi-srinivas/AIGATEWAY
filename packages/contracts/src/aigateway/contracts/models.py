@@ -26,6 +26,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+CLASSIFICATIONS = frozenset({"public", "internal", "confidential", "restricted"})
+DOCUMENT_ROLES = frozenset(
+    {"app_user", "viewer", "service_account", "security_admin", "platform_admin"}
+)
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,6 +39,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     stream: bool = False
     tenant_id: str | None = None
+    debug: bool = False
 
     @field_validator("conversation_id", "tenant_id")
     @classmethod
@@ -116,6 +123,21 @@ class GuardrailPolicyUpdate(BaseModel):
     jev_output_pii_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class RetrievalDebugHit(BaseModel):
+    chunk_id: str
+    document_id: str
+    vector_rank: int | None = None
+    bm25_rank: int | None = None
+    rrf_score: float = 0.0
+    rerank_score: float = 0.0
+    kept: bool
+    drop_reason: str | None = None
+
+
+class RetrievalDebug(BaseModel):
+    hits: list[RetrievalDebugHit] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
@@ -125,6 +147,7 @@ class ChatResponse(BaseModel):
     message_id: str | None = None
     guardrail_decisions: list[GuardrailDecision] = Field(default_factory=list)
     assessments: list[JevAssessment] = Field(default_factory=list)
+    retrieval_debug: RetrievalDebug | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -163,6 +186,7 @@ class RetrievedChunk(BaseModel):
 
 class RetrieveResult(BaseModel):
     chunks: list[RetrievedChunk] = Field(default_factory=list)
+    debug: RetrievalDebug | None = None
 
 
 class DocumentIngest(BaseModel):
@@ -172,6 +196,20 @@ class DocumentIngest(BaseModel):
     text: str = Field(min_length=1)
     classification: str | None = None
     acl: list[str] = Field(default_factory=list)
+
+    @field_validator("classification")
+    @classmethod
+    def _known_classification(cls, value: str | None) -> str | None:
+        if value is not None and value not in CLASSIFICATIONS:
+            raise ValueError("invalid classification")
+        return value
+
+    @field_validator("acl")
+    @classmethod
+    def _known_roles(cls, value: list[str]) -> list[str]:
+        if any(item not in DOCUMENT_ROLES for item in value):
+            raise ValueError("invalid acl role")
+        return value
 
 
 class DocumentOut(BaseModel):

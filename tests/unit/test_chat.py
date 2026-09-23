@@ -11,6 +11,8 @@ from aigateway.contracts import (
     GuardrailDecision,
     GuardrailPolicyUpdate,
     GuardrailText,
+    RetrievalDebug,
+    RetrievalDebugHit,
     RetrievedChunk,
 )
 from aigateway.gateway.app import create_app
@@ -663,3 +665,59 @@ def test_platform_admin_can_ingest_into_other_tenant() -> None:
         )
     assert response.status_code == 200
     assert response.json()["tenant_id"] == OTHER_TENANT_ID
+
+
+def test_app_user_debug_is_forbidden() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days", "debug": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 403
+
+
+def test_admin_debug_has_ranks_and_no_chunk_text() -> None:
+    chunk = _chunk()
+    denied = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    debug = RetrievalDebug(
+        hits=[
+            RetrievalDebugHit(
+                chunk_id=chunk.chunk_id,
+                document_id=chunk.document_id,
+                vector_rank=2,
+                bm25_rank=1,
+                rrf_score=0.03,
+                rerank_score=0.8,
+                kept=True,
+            )
+        ]
+    )
+    app = _app(
+        auth_client=FakeAuthClient(context=_ctx(role="security_admin")),
+        rag_client=FakeRetriever(chunks=[chunk], debug=debug),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days", "debug": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    hits = response.json()["retrieval_debug"]["hits"]
+    assert hits[0]["bm25_rank"] == 1
+    assert "content" not in hits[0]
+    assert denied not in response.text
+
+
+def test_unknown_classification_is_rejected() -> None:
+    app = _app(auth_client=FakeAuthClient(context=_ctx(role="security_admin")))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/documents",
+            json={"title": "Policy", "text": "A fact.", "classification": "secret"},
+            headers=AUTH,
+        )
+    assert response.status_code == 400
+    assert response.json()["code"] == "validation_error"

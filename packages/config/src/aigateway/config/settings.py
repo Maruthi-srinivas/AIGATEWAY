@@ -90,6 +90,8 @@ class RagSettings(ServiceSettings):
     embedding_model: str = ""
     rag_min_score: float = Field(default=0.3, ge=0.0, le=1.0)
     rag_top_k: int = Field(default=8, ge=1, le=32)
+    rag_candidate_k: int = Field(default=32, ge=1, le=64)
+    rag_context_max_chars: int = Field(default=8000, ge=1)
     rag_timeout_seconds: float = Field(default=2.0, ge=0.1)
     postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
     seed_enabled: bool = True

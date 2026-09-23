@@ -1,13 +1,13 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 5 adds **tenant-scoped pgvector RAG** and **one OpenAI-compatible LLM adapter** on the chat path. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`). Hybrid BM25, retrieval ACL, PDF ingest, and claim-to-chunk verification remain later.
+Docker-first middleware between applications and LLM providers. Version 6 adds **hybrid retrieval** (Postgres full-text plus vectors, fused with reciprocal rank) and **retrieval guardrails** so unauthorized chunks and secret spans never reach the LLM. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`). Claim-to-chunk verification remains Version 7.
 
-## What Version 5 does
+## What Version 6 does
 
 - `GET /v1/health` — process is up
 - `GET /v1/ready` — 200 only if Postgres, Redis, auth, guardrails, **and rag** respond
 - `POST /v1/auth/login` — HS256 access JWT + refresh token
-- `POST /v1/chat` — JWT or `X-API-Key`, then retrieve (unless chitchat) and a grounded generate. `stream: true` still buffers the full answer, runs the Jev output check, then SSE-replays tokens. Citations are on JSON and on the SSE `done` event
+- `POST /v1/chat` — JWT or `X-API-Key`, then hybrid retrieve (unless chitchat) and a grounded generate. Retrieval applies tenant, role, classification, and acl inside RAG, masks secrets in chunk text, reranks, and stops at 8000 characters. `debug: true` is only for `security_admin` and `platform_admin`
 - `POST` / `GET` / `DELETE /v1/documents` — `security_admin` (own tenant) or `platform_admin` (any `tenant_id`). JSON `{title, text}`
 - `GET` / `PATCH /v1/guardrails/policy` — same policy roles as Version 4
 - `GET /v1/conversations` and `GET /v1/conversations/{id}` — tenant-scoped history
@@ -122,6 +122,22 @@ curl -s -X POST http://localhost:8000/v1/documents -H "Content-Type: application
 
 `app_user` ingest expects **403**. Platform admin may pass `?tenant_id=` to ingest into another tenant. Decoded text over 256 KiB expects **400** `payload_too_large`. DELETE cascades chunks and vectors.
 
+### Classification, acl, and debug
+
+Ingest may set `classification` (`public`, `internal`, `confidential`, `restricted`) and `acl` (role names). An empty `acl` means every role in the tenant. Null, `public`, and `internal` are visible to every tenant role. `confidential` is `security_admin` and `platform_admin`. `restricted` is `platform_admin` only. A non-empty `acl` must also include the caller role.
+
+```json
+{"title":"Confidential","text":"The bonus pool is confidential.","classification":"confidential","acl":["security_admin"]}
+```
+
+Debug (`security_admin` or `platform_admin` only) returns ranks and drop reasons, never chunk text. Other roles get **403**.
+
+```json
+{"message":"How many paid time off days per year does Acme HR give?","debug":true}
+```
+
+A secret stored in a document (`sk-...`) stays in the document body. The text sent to the model has `[SECRET]` instead.
+
 ### Input guardrails (fixture mode)
 
 Compose defaults to `GUARDRAILS_MODE=fixture` and an empty `JEV_API_KEY`. No Perspective or TypeSafe key is required.
@@ -220,7 +236,9 @@ Copy [.env.example](.env.example) to `.env` only if you need to override default
 | `EMBEDDING_API_URL` | `https://api.openai.com/v1/embeddings` | RAG container only |
 | `EMBEDDING_MODEL` | empty | Required only when `EMBEDDING_MODE=live` |
 | `RAG_MIN_SCORE` | `0.3` | Drop retrieve hits below this cosine |
-| `RAG_TOP_K` | `8` | Retrieve cap |
+| `RAG_TOP_K` | `8` | Chunks kept after rerank, before the character budget |
+| `RAG_CANDIDATE_K` | `32` | Vector and BM25 candidate window |
+| `RAG_CONTEXT_MAX_CHARS` | `8000` | Prompt context budget after rerank |
 | `LLM_MODE` | `fixture` | Gateway (`live` uses OpenAI-compatible Chat Completions) |
 | `OPENAI_API_KEY` | empty | Gateway only |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Gateway only |

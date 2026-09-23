@@ -24,7 +24,9 @@ from aigateway.contracts.models import (
     GuardrailPolicy,
     GuardrailPolicyUpdate,
     GuardrailText,
+    RetrievalDebug,
     RetrievedChunk,
+    RetrieveResult,
 )
 
 
@@ -128,9 +130,11 @@ class FakeRetriever:
         *,
         unavailable: bool = False,
         chunks: list[RetrievedChunk] | None = None,
+        debug: RetrievalDebug | None = None,
     ) -> None:
         self.unavailable = unavailable
         self.chunks = chunks
+        self.debug = debug
         self.calls: list[dict] = []
         self.documents: dict[str, list[DocumentDetail]] = {}
 
@@ -139,13 +143,23 @@ class FakeRetriever:
         query: str,
         tenant_id: str,
         top_k: int = 8,
-    ) -> list[RetrievedChunk]:
-        self.calls.append({"query": query, "tenant_id": tenant_id, "top_k": top_k})
+        *,
+        role: str = "app_user",
+        debug: bool = False,
+    ) -> RetrieveResult:
+        self.calls.append(
+            {
+                "query": query,
+                "tenant_id": tenant_id,
+                "top_k": top_k,
+                "role": role,
+                "debug": debug,
+            }
+        )
         if self.unavailable:
             raise RagUnavailableError()
-        if self.chunks is not None:
-            return list(self.chunks)[:top_k]
-        return []
+        rows = list(self.chunks)[:top_k] if self.chunks is not None else []
+        return RetrieveResult(chunks=rows, debug=self.debug if debug else None)
 
     async def ingest(self, tenant_id: str, body: DocumentIngest, created_by: str) -> DocumentOut:
         _ = created_by

@@ -327,7 +327,7 @@ def test_live_secret_is_redacted() -> None:
     tokens = _login("user@hr.local")
     response = httpx.post(
         f"{GATEWAY_URL}/v1/chat",
-        json={"message": "key is sk-abcdefghijklmnopqrstuvwxyz"},
+        json={"message": "sk-abcdefghijklmnopqrstuvwxyz"},
         headers=_bearer(tokens),
         timeout=5.0,
     )
@@ -542,10 +542,25 @@ def test_live_hr_seed_is_cited_and_isolated() -> None:
     hr = _login("user@hr.local")
     eng = _login("user@eng.local")
     sec = _login("sec@hr.local")
-    docs = httpx.get(f"{GATEWAY_URL}/v1/documents", headers=_bearer(sec), timeout=5.0)
-    assert docs.status_code == 200
-    hr_ids = {item["id"] for item in docs.json()["items"]}
+    items: list[dict] = []
+    offset = 0
+    while True:
+        docs = httpx.get(
+            f"{GATEWAY_URL}/v1/documents",
+            headers=_bearer(sec),
+            params={"limit": 100, "offset": offset},
+            timeout=5.0,
+        )
+        assert docs.status_code == 200
+        page = docs.json()["items"]
+        items.extend(page)
+        if len(page) < 100:
+            break
+        offset += 100
+    hr_ids = {item["id"] for item in items}
+    seed_ids = {item["id"] for item in items if item["title"] == "Acme HR leave policy"}
     assert hr_ids
+    assert seed_ids
     hr_chat = httpx.post(
         f"{GATEWAY_URL}/v1/chat",
         json={"message": HR_PTO_QUESTION},
@@ -557,7 +572,7 @@ def test_live_hr_seed_is_cited_and_isolated() -> None:
     assert hr_body["citations"]
     cited = {item["document_id"] for item in hr_body["citations"]}
     assert cited <= hr_ids
-    assert cited & hr_ids
+    assert cited & seed_ids
     eng_chat = httpx.post(
         f"{GATEWAY_URL}/v1/chat",
         json={"message": HR_PTO_QUESTION},
@@ -714,3 +729,201 @@ def test_live_platform_admin_ingests_into_other_tenant() -> None:
     )
     assert listed.status_code == 200
     assert any(item["id"] == created.json()["id"] for item in listed.json()["items"])
+
+
+@skip_without_stack
+def test_live_hybrid_rare_token_is_first_citation() -> None:
+    token = f"qxuniquetoken{uuid.uuid4().hex}"
+    sec = _login("sec@hr.local")
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={
+            "title": "Rare code",
+            "text": f"{token} paid time off is recorded in this runbook.",
+        },
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    doc_id = created.json()["id"]
+    hr = _login("user@hr.local")
+    chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"{token} paid time off"},
+        headers=_bearer(hr),
+        timeout=15.0,
+    )
+    assert chat.status_code == 200
+    citations = chat.json()["citations"]
+    assert citations
+    assert citations[0]["document_id"] == doc_id
+    eng = _login("user@eng.local")
+    eng_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"{token} paid time off"},
+        headers=_bearer(eng),
+        timeout=15.0,
+    )
+    assert eng_chat.status_code == 200
+    assert all(item["document_id"] != doc_id for item in eng_chat.json()["citations"])
+
+
+@skip_without_stack
+def test_live_confidential_and_restricted_are_role_gated() -> None:
+    secret = f"confidfact{uuid.uuid4().hex}"
+    locked = f"restrictfact{uuid.uuid4().hex}"
+    sec = _login("sec@hr.local")
+    user = _login("user@hr.local")
+    hr_tenant = user["user"]["tenant_id"]
+    confidential = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={
+            "title": "Confidential",
+            "text": f"The {secret} policy is confidential.",
+            "classification": "confidential",
+        },
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert confidential.status_code == 200
+    confidential_id = confidential.json()["id"]
+    restricted = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={
+            "title": "Restricted",
+            "text": f"The {locked} policy is restricted.",
+            "classification": "restricted",
+        },
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert restricted.status_code == 200
+    restricted_id = restricted.json()["id"]
+    user_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {secret} policy?"},
+        headers=_bearer(user),
+        timeout=15.0,
+    )
+    assert user_chat.status_code == 200
+    assert all(item["document_id"] != confidential_id for item in user_chat.json()["citations"])
+    sec_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {secret} policy?"},
+        headers=_bearer(sec),
+        timeout=15.0,
+    )
+    assert sec_chat.status_code == 200
+    assert any(item["document_id"] == confidential_id for item in sec_chat.json()["citations"])
+    sec_locked = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {locked} policy?"},
+        headers=_bearer(sec),
+        timeout=15.0,
+    )
+    assert sec_locked.status_code == 200
+    assert all(item["document_id"] != restricted_id for item in sec_locked.json()["citations"])
+    admin = _login("admin@platform.local")
+    admin_chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {locked} policy?", "tenant_id": hr_tenant},
+        headers=_bearer(admin),
+        timeout=15.0,
+    )
+    assert admin_chat.status_code == 200
+    assert any(item["document_id"] == restricted_id for item in admin_chat.json()["citations"])
+
+
+@skip_without_stack
+def test_live_acl_hides_document_from_app_user() -> None:
+    token = f"aclfact{uuid.uuid4().hex}"
+    sec = _login("sec@hr.local")
+    user = _login("user@hr.local")
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={
+            "title": "Admin only",
+            "text": f"The {token} roster is for security admins.",
+            "acl": ["security_admin"],
+        },
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    doc_id = created.json()["id"]
+    hidden = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {token} roster?"},
+        headers=_bearer(user),
+        timeout=15.0,
+    )
+    assert hidden.status_code == 200
+    assert all(item["document_id"] != doc_id for item in hidden.json()["citations"])
+    visible = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": f"What is the {token} roster?"},
+        headers=_bearer(sec),
+        timeout=15.0,
+    )
+    assert visible.status_code == 200
+    assert any(item["document_id"] == doc_id for item in visible.json()["citations"])
+
+
+@skip_without_stack
+def test_live_secret_in_document_is_masked_before_the_prompt() -> None:
+    raw_key = "sk-abcdefghijklmnopqrstuvwxyz"
+    sec = _login("sec@hr.local")
+    created = httpx.post(
+        f"{GATEWAY_URL}/v1/documents",
+        json={"title": "Payroll", "text": f"The key is {raw_key} for payroll."},
+        headers=_bearer(sec),
+        timeout=10.0,
+    )
+    assert created.status_code == 200
+    doc_id = created.json()["id"]
+    stored = httpx.get(
+        f"{GATEWAY_URL}/v1/documents/{doc_id}",
+        headers=_bearer(sec),
+        timeout=5.0,
+    )
+    assert stored.status_code == 200
+    assert raw_key in stored.json()["body"]
+    chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": "payroll key", "debug": True},
+        headers=_bearer(sec),
+        timeout=15.0,
+    )
+    assert chat.status_code == 200
+    body = chat.json()
+    assert raw_key not in body["answer"]
+    assert "[SECRET]" in body["answer"]
+    debug = body["retrieval_debug"]
+    assert debug is not None
+    assert all("content" not in hit for hit in debug["hits"])
+    assert raw_key not in chat.text
+
+
+@skip_without_stack
+def test_live_char_budget_limits_citations() -> None:
+    sec = _login("sec@hr.local")
+    word = f"budgettoken{uuid.uuid4().hex}"
+    for index in range(5):
+        created = httpx.post(
+            f"{GATEWAY_URL}/v1/documents",
+            json={"title": f"Budget {index}", "text": f"{word} item{index} " + ("m" * 2500)},
+            headers=_bearer(sec),
+            timeout=15.0,
+        )
+        assert created.status_code == 200
+    chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": word, "debug": True},
+        headers=_bearer(sec),
+        timeout=20.0,
+    )
+    assert chat.status_code == 200
+    body = chat.json()
+    assert len(body["citations"]) == 3
+    assert any(hit["drop_reason"] == "char_budget" for hit in body["retrieval_debug"]["hits"])
+    assert all("content" not in hit for hit in body["retrieval_debug"]["hits"])

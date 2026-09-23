@@ -93,7 +93,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.5.0",
+        version="0.6.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )

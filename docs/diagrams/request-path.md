@@ -1,8 +1,8 @@
 # Request path
 
-## Version 5 (current)
+## Version 6 (current)
 
-The gateway is the only public port. After input guardrails, it classifies the latest user message. Greetings skip retrieve. Knowledge questions call `services/rag` with a tenant filter, then `LLMClient.generate` with a grounded prompt. Empty retrieve hits return a fixed I-don't-know string without calling the LLM. Streaming still generates fully, runs the Jev output check, then SSE-replays tokens. Citations on JSON and on `done` are every chunk inserted into the prompt.
+The gateway is the only public port. After input guardrails, it classifies the latest user message. Greetings skip retrieve. Knowledge questions call `services/rag` with the caller role. RAG runs a tenant filter, classification and acl checks, vector search, Postgres full-text search, reciprocal rank fusion, secret masking, a fixture rerank, dedupe, and an 8000-character budget. The gateway then calls `LLMClient.generate` with the chunks RAG returned. Empty retrieve hits return a fixed I-don't-know string without calling the LLM. Streaming still generates fully, runs the Jev output check, then SSE-replays tokens. Citations on JSON and on `done` are every chunk inserted into the prompt. `debug: true` adds ranks and drop reasons for `security_admin` and `platform_admin` only, with no chunk text and no policy-denied rows.
 
 ```mermaid
 sequenceDiagram

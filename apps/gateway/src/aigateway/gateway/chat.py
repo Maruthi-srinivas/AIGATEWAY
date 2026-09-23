@@ -173,6 +173,9 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
             metadata={"conversation_id": body.conversation_id},
         )
         raise
+    if body.debug and ctx.role not in {"security_admin", "platform_admin"}:
+        await audit_chat(request, ctx, status_code=403, success=False)
+        raise AuthorizationError("retrieval debug is forbidden")
     try:
         limit = await consume_limit(request, ctx, tenant_id)
     except RateLimitedError as exc:
@@ -264,22 +267,26 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     history = [{"role": item.role, "content": item.content} for item in check.texts]
     cid = correlation_id_var.get()
     citations = []
+    retrieval_debug = None
     llm_messages = history
     if is_chitchat(masked_user):
         raw_answer = await _generate(request, ctx, llm_messages)
     else:
         try:
-            chunks = await request.app.state.rag_client.retrieve(
+            retrieved = await request.app.state.rag_client.retrieve(
                 tenant_id=tenant_id,
                 query=masked_user,
+                role=ctx.role,
+                debug=body.debug,
             )
         except RagUnavailableError as exc:
             await audit_chat(request, ctx, status_code=503, success=False)
             raise exc
-        if not chunks:
+        retrieval_debug = retrieved.debug
+        if not retrieved.chunks:
             raw_answer = I_DONT_KNOW
         else:
-            llm_messages, citations = grounded_messages(history, chunks)
+            llm_messages, citations = grounded_messages(history, retrieved.chunks)
             raw_answer = await _generate(request, ctx, llm_messages)
     try:
         outbound = await request.app.state.guardrail_client.check_output(
@@ -321,6 +328,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         message_id=str(assistant.id),
         guardrail_decisions=decisions,
         assessments=assessments,
+        retrieval_debug=retrieval_debug,
     )
     if body.stream:
         return StreamingResponse(

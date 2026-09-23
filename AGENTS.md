@@ -5,8 +5,8 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## Scope
 
 - Implement one roadmap version at a time ([12_VERSION_FEATURE_ROADMAP.md](12_VERSION_FEATURE_ROADMAP.md)).
-- Current shipped slice is Version 5: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, **tenant-scoped pgvector RAG**, and **one OpenAI-compatible LLM adapter**.
-- Do not add hybrid BM25, retrieval ACL, Kafka, Grafana, or Kubernetes until their version. Full output hallucination and citation verification remain Version 7.
+- Current shipped slice is Version 6: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, tenant-scoped pgvector RAG, one OpenAI-compatible LLM adapter, **hybrid BM25 + vector retrieval**, and **retrieval ACL / secret masking**.
+- Do not add Kafka, Grafana, or Kubernetes until their version. Full output hallucination and citation verification remain Version 7.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## API contracts
 
 - Update OpenAPI when you add or change HTTP routes.
-- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, retrieve (unless chitchat), grounded generate, and a thin Jev output check. FastAPI version is **0.5.0**.
+- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, hybrid retrieve (unless chitchat), grounded generate, and a thin Jev output check. FastAPI version is **0.6.0**.
 - `/v1/health` is liveness. `/v1/ready` checks Postgres, Redis, auth, guardrails, and rag. Ready does not ping a live LLM.
 
 ## Docs and tests

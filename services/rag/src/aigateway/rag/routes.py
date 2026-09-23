@@ -47,7 +47,9 @@ def _uuid(value: str, label: str) -> uuid.UUID:
 class RetrieveRequest(BaseModel):
     tenant_id: str
     query: str = Field(min_length=1)
+    role: str = Field(min_length=1)
     top_k: int | None = None
+    debug: bool = False
 
 
 def require_internal(request: Request, settings: RagSettings) -> None:
@@ -79,18 +81,23 @@ async def retrieve(
         chunks = await search_chunks(
             session,
             tenant_id=_uuid(body.tenant_id, "tenant id"),
+            role=body.role,
             embedding=embedding,
+            query=body.query,
             top_k=body.top_k or settings.rag_top_k,
+            candidate_k=max(settings.rag_candidate_k, body.top_k or settings.rag_top_k),
             min_score=settings.rag_min_score,
+            max_chars=settings.rag_context_max_chars,
+            debug=body.debug,
         )
     finally:
         tenant_id_var.reset(tenant_token)
     logger.info(
         "rag retrieve hits=%s tenant_id=%s",
-        len(chunks),
+        len(chunks.chunks),
         body.tenant_id,
     )
-    return RetrieveResult(chunks=chunks)
+    return chunks
 
 
 @router.post("/documents")

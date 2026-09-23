@@ -36,6 +36,8 @@ from aigateway.contracts.models import (
     LoginRequest,
     MessageOut,
     RefreshRequest,
+    RetrievalDebug,
+    RetrievalDebugHit,
     RetrievedChunk,
     RetrieveResult,
 )
@@ -84,6 +86,8 @@ __all__ = [
     "RateLimitedError",
     "RateLimiterUnavailableError",
     "RefreshRequest",
+    "RetrievalDebug",
+    "RetrievalDebugHit",
     "RetrievedChunk",
     "RetrieveResult",
     "Retriever",
