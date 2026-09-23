@@ -1,19 +1,19 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 6 adds **hybrid retrieval** (Postgres full-text plus vectors, fused with reciprocal rank) and **retrieval guardrails** so unauthorized chunks and secret spans never reach the LLM. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`). Claim-to-chunk verification remains Version 7.
+Docker-first middleware between applications and LLM providers. Version 7 checks each answer sentence against the retrieved chunks, drops anything that is not supported, and redacts secret spans in the model answer. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
 
-## What Version 6 does
+## What Version 7 does
 
 - `GET /v1/health` — process is up
 - `GET /v1/ready` — 200 only if Postgres, Redis, auth, guardrails, **and rag** respond
 - `POST /v1/auth/login` — HS256 access JWT + refresh token
-- `POST /v1/chat` — JWT or `X-API-Key`, then hybrid retrieve (unless chitchat) and a grounded generate. Retrieval applies tenant, role, classification, and acl inside RAG, masks secrets in chunk text, reranks, and stops at 8000 characters. `debug: true` is only for `security_admin` and `platform_admin`
+- `POST /v1/chat` — JWT or `X-API-Key`, then hybrid retrieve (unless chitchat) and a grounded generate. Retrieval applies tenant, role, classification, and acl inside RAG, masks secrets in chunk text, reranks, and stops at 8000 characters. The gateway then drops any answer sentence that is not supported by one of those chunks, redacts secret spans in the answer, and returns `groundedness`. `debug: true` is only for `security_admin` and `platform_admin`
 - `POST` / `GET` / `DELETE /v1/documents` — `security_admin` (own tenant) or `platform_admin` (any `tenant_id`). JSON `{title, text}`
 - `GET` / `PATCH /v1/guardrails/policy` — same policy roles as Version 4
 - `GET /v1/conversations` and `GET /v1/conversations/{id}` — tenant-scoped history
 - Redis token buckets per tenant **and** user (or API key). Over quota → **429**. Redis down on chat → **503**
 - Guardrails down or slower than 2s → **503 `guardrails_unavailable`**. RAG down or slower than 2s → **503 `rag_unavailable`**. Live LLM down, timeout, or missing key → **503 `llm_unavailable`**
-- No retrieved chunks above `RAG_MIN_SCORE` → HTTP **200** with `I don't know based on the available documents.` and `citations: []` (LLM is not called)
+- No retrieved chunks above `RAG_MIN_SCORE` → HTTP **200** with `I don't know based on the available documents.` and `citations: []` (LLM is not called). The same string is returned when every generated sentence fails the citation check. `groundedness` is `0` in that case, and `null` for chitchat and the no-chunk path
 - Tenant-scoped audit logs; Tenant A cannot read Tenant B’s conversations or documents
 
 See [12_VERSION_FEATURE_ROADMAP.md](12_VERSION_FEATURE_ROADMAP.md).
@@ -80,7 +80,7 @@ curl -s -X POST http://localhost:8000/v1/chat -H "Content-Type: application/json
 
 ### Grounded chat
 
-Seeded HR fact (expect 200, a grounded answer, and non-empty `citations`):
+Seeded HR fact (expect 200, a grounded answer, `groundedness` of 1, and `citations` for the chunks that support the answer):
 
 ```json
 {"message":"How many paid time off days per year does Acme HR give?"}

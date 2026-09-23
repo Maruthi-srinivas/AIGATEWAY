@@ -5,8 +5,8 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## Scope
 
 - Implement one roadmap version at a time ([12_VERSION_FEATURE_ROADMAP.md](12_VERSION_FEATURE_ROADMAP.md)).
-- Current shipped slice is Version 6: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, tenant-scoped pgvector RAG, one OpenAI-compatible LLM adapter, **hybrid BM25 + vector retrieval**, and **retrieval ACL / secret masking**.
-- Do not add Kafka, Grafana, or Kubernetes until their version. Full output hallucination and citation verification remain Version 7.
+- Current shipped slice is Version 7: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, tenant-scoped pgvector RAG, one OpenAI-compatible LLM adapter, **hybrid BM25 + vector retrieval**, **retrieval ACL / secret masking**, and **sentence-level citation verification** with output secret redaction.
+- Do not add Kafka, Grafana, or Kubernetes until their version. Golden-set faithfulness evals remain Version 10.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 - Live LLM **fails closed** if the provider is down, slower than 30s, or the key/model is missing (503 `llm_unavailable`). Fixture mode stays keyless.
 - Every query that is not `platform_admin` must filter `tenant_id = ctx.tenant_id`.
 - Every log line should be JSON. Include correlation ID, and `user_id` / `tenant_id` when known.
-- Never log raw passwords, refresh tokens, full API keys (prefix only), raw prompts, secret spans, document bodies, or chunk text.
+- Never log raw passwords, refresh tokens, full API keys (prefix only), raw prompts, model answers, dropped sentences, secret spans, document bodies, or chunk text.
 
 ## Docker
 
@@ -36,7 +36,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## API contracts
 
 - Update OpenAPI when you add or change HTTP routes.
-- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, hybrid retrieve (unless chitchat), grounded generate, and a thin Jev output check. FastAPI version is **0.6.0**.
+- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, hybrid retrieve (unless chitchat), grounded generate, sentence citation checks, output secret redaction, and a thin Jev output check. FastAPI version is **0.7.0**.
 - `/v1/health` is liveness. `/v1/ready` checks Postgres, Redis, auth, guardrails, and rag. Ready does not ping a live LLM.
 
 ## Docs and tests

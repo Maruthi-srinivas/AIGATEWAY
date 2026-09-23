@@ -142,6 +142,7 @@ class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
     confidence: float | None = None
+    groundedness: float | None = None
     trace_id: str | None = None
     conversation_id: str | None = None
     message_id: str | None = None

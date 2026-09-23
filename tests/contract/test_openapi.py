@@ -23,7 +23,7 @@ def test_openapi_contains_version_5_paths() -> None:
     assert any(p.startswith("/v1/auth") for p in paths)
     assert "post" in paths["/v1/chat"]
     assert "get" in paths["/v1/conversations"]
-    assert spec["info"]["version"] == "0.6.0"
+    assert spec["info"]["version"] == "0.7.0"
     schemes = spec["components"]["securitySchemes"]
     assert "BearerAuth" in schemes
     assert "ApiKeyAuth" in schemes
@@ -33,3 +33,4 @@ def test_openapi_contains_version_5_paths() -> None:
     chat = spec["components"]["schemas"]["ChatResponse"]["properties"]
     assert "assessments" in chat
     assert "confidence" in chat
+    assert "groundedness" in chat

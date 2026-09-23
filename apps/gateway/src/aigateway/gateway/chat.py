@@ -32,7 +32,12 @@ from aigateway.contracts import (
 )
 from aigateway.gateway.classify import is_chitchat
 from aigateway.gateway.deps import effective_tenant_id, require_auth, require_chat_role
-from aigateway.gateway.grounding import I_DONT_KNOW, grounded_messages
+from aigateway.gateway.grounding import (
+    I_DONT_KNOW,
+    grounded_messages,
+    mask_secrets,
+    verify_answer,
+)
 from aigateway.gateway.rate_limit import RateLimitResult
 from aigateway.gateway.repository import (
     ConversationRecord,
@@ -60,9 +65,22 @@ def _merge_checks(
     inbound: GuardrailCheckResult,
     outbound: GuardrailCheckResult,
     raw_answer: str,
+    *,
+    groundedness: float | None,
+    dropped: int,
 ) -> tuple[str, list[GuardrailDecision], list[JevAssessment], float | None]:
-    answer = OUTPUT_REFUSAL if outbound.decision == "block" else raw_answer
+    blocked = outbound.decision == "block"
+    answer = OUTPUT_REFUSAL if blocked else raw_answer
     decisions = [*inbound.decisions, *outbound.decisions]
+    if dropped > 0:
+        decisions.append(
+            GuardrailDecision(
+                decision="redact",
+                rule_id="citation_unverified",
+                score=groundedness,
+                reason=f"dropped={dropped}",
+            )
+        )
     assessments = [*inbound.assessments, *outbound.assessments]
     return answer, decisions, assessments, _output_confidence(assessments)
 
@@ -268,9 +286,11 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     cid = correlation_id_var.get()
     citations = []
     retrieval_debug = None
+    groundedness = None
+    unsupported_count = 0
     llm_messages = history
     if is_chitchat(masked_user):
-        raw_answer = await _generate(request, ctx, llm_messages)
+        raw_answer = mask_secrets(await _generate(request, ctx, llm_messages))
     else:
         try:
             retrieved = await request.app.state.rag_client.retrieve(
@@ -284,10 +304,13 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
             raise exc
         retrieval_debug = retrieved.debug
         if not retrieved.chunks:
-            raw_answer = I_DONT_KNOW
+            raw_answer = mask_secrets(I_DONT_KNOW)
         else:
-            llm_messages, citations = grounded_messages(history, retrieved.chunks)
-            raw_answer = await _generate(request, ctx, llm_messages)
+            llm_messages, _ = grounded_messages(history, retrieved.chunks)
+            generated = await _generate(request, ctx, llm_messages)
+            raw_answer, citations, groundedness, unsupported_count = verify_answer(
+                generated, retrieved.chunks
+            )
     try:
         outbound = await request.app.state.guardrail_client.check_output(
             tenant_id=tenant_id,
@@ -296,7 +319,15 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     except GuardrailsUnavailableError as exc:
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc
-    answer, decisions, assessments, confidence = _merge_checks(check, outbound, raw_answer)
+    answer, decisions, assessments, confidence = _merge_checks(
+        check,
+        outbound,
+        raw_answer,
+        groundedness=groundedness,
+        dropped=unsupported_count,
+    )
+    if outbound.decision == "block":
+        citations = []
     assistant = await request.app.state.chat_repo.add_message(
         conversation_id=conversation.id,
         tenant_id=uuid.UUID(tenant_id),
@@ -317,12 +348,15 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         metadata={
             "conversation_id": str(conversation.id),
             "output_blocked": outbound.decision == "block",
+            "groundedness": groundedness,
+            "unsupported_count": unsupported_count,
         },
     )
     payload = ChatResponse(
         answer=answer,
         citations=citations,
         confidence=confidence,
+        groundedness=groundedness,
         trace_id=cid,
         conversation_id=str(conversation.id),
         message_id=str(assistant.id),

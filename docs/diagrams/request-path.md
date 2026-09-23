@@ -1,8 +1,8 @@
 # Request path
 
-## Version 6 (current)
+## Version 7 (current)
 
-The gateway is the only public port. After input guardrails, it classifies the latest user message. Greetings skip retrieve. Knowledge questions call `services/rag` with the caller role. RAG runs a tenant filter, classification and acl checks, vector search, Postgres full-text search, reciprocal rank fusion, secret masking, a fixture rerank, dedupe, and an 8000-character budget. The gateway then calls `LLMClient.generate` with the chunks RAG returned. Empty retrieve hits return a fixed I-don't-know string without calling the LLM. Streaming still generates fully, runs the Jev output check, then SSE-replays tokens. Citations on JSON and on `done` are every chunk inserted into the prompt. `debug: true` adds ranks and drop reasons for `security_admin` and `platform_admin` only, with no chunk text and no policy-denied rows.
+The gateway is the only public port. After input guardrails, it classifies the latest user message. Greetings skip retrieve. Knowledge questions call `services/rag` with the caller role. RAG runs a tenant filter, classification and acl checks, vector search, Postgres full-text search, reciprocal rank fusion, secret masking, a fixture rerank, dedupe, and an 8000-character budget. The gateway then calls `LLMClient.generate` with the chunks RAG returned. Each answer sentence must share at least half of its tokens with one of those chunks. Unsupported sentences are dropped. If none remain, the fixed I-don't-know string is returned. Secret spans in the answer are replaced with `[SECRET]` before that check. Empty retrieve hits return the same string without calling the LLM, and chitchat skips the sentence check. `groundedness` is the share of checked sentences that were kept. Streaming still generates fully, verifies, runs the Jev output check, then SSE-replays the final text. Citations on JSON and on `done` are the chunks that support a kept sentence. `debug: true` adds ranks and drop reasons for `security_admin` and `platform_admin` only, with no chunk text and no policy-denied rows.
 
 ```mermaid
 sequenceDiagram
@@ -59,9 +59,10 @@ sequenceDiagram
                     alt LLM down
                         Gateway-->>Client: 503 llm_unavailable
                     else ok
+                        Gateway->>Gateway: redact secrets and drop unsupported sentences
                         Gateway->>Guardrails: POST /internal/v1/check-output
                         Gateway->>Postgres: assistant message
-                        Gateway-->>Client: 200 JSON or SSE with citations
+                        Gateway-->>Client: 200 JSON or SSE with supporting citations
                     end
                 end
             end

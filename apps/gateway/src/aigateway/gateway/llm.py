@@ -20,7 +20,9 @@ class FixtureLLMClient:
         for item in messages:
             content = item.get("content") or ""
             if "CONTEXT:" in content:
-                return f"According to the documents: {_context_excerpt(content)}"
+                sentences = _context_sentences(content)
+                if sentences:
+                    return " ".join(sentences)
         last = messages[-1]["content"] if messages else ""
         return f"Stub: {last}"
 
@@ -79,12 +81,21 @@ class OpenAICompatLLMClient:
         yield answer
 
 
-def _context_excerpt(content: str) -> str:
+def _context_sentences(content: str) -> list[str]:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
-    for index, line in enumerate(lines):
-        if line.startswith("[") and index + 1 < len(lines):
-            return lines[index + 1][:240]
-    return "context"
+    sentences: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].startswith("[") and index + 1 < len(lines):
+            excerpt = lines[index + 1][:240].strip()
+            if excerpt and excerpt[-1] not in ".!?":
+                excerpt = f"{excerpt}."
+            if excerpt:
+                sentences.append(excerpt)
+            index += 2
+            continue
+        index += 1
+    return sentences
 
 
 def build_llm_client(settings: GatewaySettings, http_client: httpx.AsyncClient | None = None):

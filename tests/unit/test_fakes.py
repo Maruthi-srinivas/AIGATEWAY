@@ -43,8 +43,7 @@ async def test_fake_llm_echoes_grounded_context() -> None:
         {"role": "user", "content": "how much pto?"},
     ]
     answer = await client.generate(messages)
-    assert answer.startswith("According to the documents:")
-    assert "twenty days" in answer
+    assert "Acme HR paid time off is twenty days." in answer
 
 
 async def test_fake_guardrail_allows_by_default() -> None:

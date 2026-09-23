@@ -523,6 +523,7 @@ def test_chitchat_skips_retrieve_and_has_empty_citations() -> None:
     body = response.json()
     assert body["answer"].startswith("Stub:")
     assert body["citations"] == []
+    assert body["groundedness"] is None
     assert retriever.calls == []
     assert llm.calls
 
@@ -541,6 +542,7 @@ def test_unknown_fact_returns_i_dont_know_without_llm() -> None:
     body = response.json()
     assert body["answer"] == I_DONT_KNOW
     assert body["citations"] == []
+    assert body["groundedness"] is None
     assert retriever.calls
     assert llm.calls == []
 
@@ -583,8 +585,8 @@ def test_grounded_chat_returns_prompt_citations() -> None:
         )
     assert response.status_code == 200
     body = response.json()
-    assert "According to the documents" in body["answer"]
     assert "twenty days" in body["answer"]
+    assert body["groundedness"] == 1.0
     assert body["citations"] == [{"document_id": chunk.document_id, "chunk_id": chunk.chunk_id}]
 
 
@@ -721,3 +723,148 @@ def test_unknown_classification_is_rejected() -> None:
         )
     assert response.status_code == 400
     assert response.json()["code"] == "validation_error"
+
+
+class ScriptedLLM(FakeLLMClient):
+    def __init__(self, answer: str) -> None:
+        super().__init__()
+        self._script = answer
+
+    async def generate(self, messages: list[dict[str, str]], *, stream: bool = False) -> str:
+        _ = stream
+        self.calls.append(messages)
+        return self._script
+
+
+def _knowledge(answer: str, chunk: RetrievedChunk | None = None, **kwargs):
+    fact = chunk or _chunk()
+    auth = kwargs.pop("auth_client", FakeAuthClient())
+    repo = kwargs.pop("chat_repo", MemoryChatRepository())
+    app = _app(
+        auth_client=auth,
+        chat_repo=repo,
+        rag_client=FakeRetriever(chunks=[fact]),
+        llm_client=ScriptedLLM(answer),
+        **kwargs,
+    )
+    return app, auth, repo, fact
+
+
+def test_unsupported_sentence_is_dropped() -> None:
+    fact = _chunk()
+    answer = f"{fact.content} The moon is made of cheese."
+    app, auth, _repo, chunk = _knowledge(answer, fact)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == fact.content
+    assert "cheese" not in body["answer"]
+    assert body["groundedness"] == 0.5
+    assert body["citations"] == [{"document_id": chunk.document_id, "chunk_id": chunk.chunk_id}]
+    decision = next(
+        item for item in body["guardrail_decisions"] if item["rule_id"] == "citation_unverified"
+    )
+    assert decision["decision"] == "redact"
+    assert decision["reason"] == "dropped=1"
+    assert "cheese" not in response.text
+    audit = next(
+        item for item in auth.audits if item["action"] == "chat.attempt" and item["success"]
+    )
+    assert audit["metadata"]["groundedness"] == 0.5
+    assert audit["metadata"]["unsupported_count"] == 1
+
+
+def test_fully_unsupported_answer_becomes_i_dont_know() -> None:
+    app, _auth, repo, _chunk_row = _knowledge("The moon is made of cheese.")
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == I_DONT_KNOW
+    assert body["citations"] == []
+    assert body["groundedness"] == 0.0
+    assert body["guardrail_decisions"][-1]["reason"] == "dropped=1"
+    stored = next(iter(repo.messages.values()))
+    assert stored[-1].content == I_DONT_KNOW
+    assert "cheese" not in response.text
+
+
+def test_exact_i_dont_know_sentence_is_kept() -> None:
+    fact = _chunk()
+    app, _auth, _repo, chunk = _knowledge(f"{fact.content} {I_DONT_KNOW}", fact)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    body = response.json()
+    assert response.status_code == 200
+    assert fact.content in body["answer"]
+    assert I_DONT_KNOW in body["answer"]
+    assert body["groundedness"] == 1.0
+    assert body["citations"] == [{"document_id": chunk.document_id, "chunk_id": chunk.chunk_id}]
+    assert all(item["rule_id"] != "citation_unverified" for item in body["guardrail_decisions"])
+
+
+def test_output_secret_is_redacted_before_storage() -> None:
+    raw_key = "sk-abcdefghijklmnopqrstuvwxyz"
+    chunk = RetrievedChunk(
+        chunk_id="cccccccccccccccccccccccccccccccccccc",
+        document_id="dddddddddddddddddddddddddddddddddddd",
+        content="The key is [SECRET] for payroll.",
+        score=0.9,
+    )
+    app, _auth, repo, _fact = _knowledge(f"The key is {raw_key} for payroll.", chunk)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "payroll key"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert "[SECRET]" in body["answer"]
+    assert raw_key not in response.text
+    assert body["citations"] == [{"document_id": chunk.document_id, "chunk_id": chunk.chunk_id}]
+    stored = next(iter(repo.messages.values()))
+    assert raw_key not in stored[-1].content
+
+
+def test_output_block_clears_citations_and_keeps_groundedness() -> None:
+    fact = _chunk()
+    guardrail = FakeGuardrail(
+        output_result=GuardrailCheckResult(
+            decision="block",
+            decisions=[
+                GuardrailDecision(
+                    decision="block",
+                    rule_id="jev_output_toxicity",
+                    score=0.99,
+                    reason="blocked",
+                )
+            ],
+            texts=[],
+        )
+    )
+    app, _auth, _repo, _fact = _knowledge(fact.content, fact, guardrail_client=guardrail)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "how many paid time off days"},
+            headers=AUTH,
+        )
+    body = response.json()
+    assert body["answer"] == "The assistant response was blocked by output guardrails."
+    assert body["citations"] == []
+    assert body["groundedness"] == 1.0
+    assert fact.content not in response.text

@@ -208,8 +208,9 @@ class FakeLLMClient:
         for item in messages:
             content = item.get("content") or ""
             if "CONTEXT:" in content:
-                excerpt = _context_excerpt(content)
-                return f"According to the documents: {excerpt}"
+                sentences = _context_sentences(content)
+                if sentences:
+                    return " ".join(sentences)
         last = messages[-1]["content"] if messages else ""
         return f"Stub: {last}"
 
@@ -233,12 +234,21 @@ class FakeLLMClient:
             yield word if index == len(words) - 1 else f"{word} "
 
 
-def _context_excerpt(content: str) -> str:
+def _context_sentences(content: str) -> list[str]:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
-    for index, line in enumerate(lines):
-        if line.startswith("[") and index + 1 < len(lines):
-            return lines[index + 1][:240]
-    return "context"
+    sentences: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].startswith("[") and index + 1 < len(lines):
+            excerpt = lines[index + 1][:240].strip()
+            if excerpt and excerpt[-1] not in ".!?":
+                excerpt = f"{excerpt}."
+            if excerpt:
+                sentences.append(excerpt)
+            index += 2
+            continue
+        index += 1
+    return sentences
 
 
 class FakeEvaluator:
