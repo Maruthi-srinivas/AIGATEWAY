@@ -21,10 +21,18 @@ class ReadinessStatus:
     auth: bool
     guardrails: bool
     rag: bool
+    kafka: bool
 
     @property
     def ok(self) -> bool:
-        return self.postgres and self.redis and self.auth and self.guardrails and self.rag
+        return (
+            self.postgres
+            and self.redis
+            and self.auth
+            and self.guardrails
+            and self.rag
+            and self.kafka
+        )
 
 
 async def default_check_postgres(dsn: str, timeout: float) -> bool:
@@ -59,6 +67,27 @@ async def default_check_redis(url: str, timeout: float) -> bool:
         return False
 
 
+async def default_check_kafka(bootstrap_servers: str, timeout: float) -> bool:
+    if not bootstrap_servers:
+        return False
+    try:
+        from aiokafka.admin import AIOKafkaAdminClient
+
+        admin = AIOKafkaAdminClient(
+            bootstrap_servers=bootstrap_servers,
+            request_timeout_ms=max(int(timeout * 1000), 5000),
+        )
+        await admin.start()
+        try:
+            await admin.list_topics()
+            return True
+        finally:
+            await admin.close()
+    except Exception:
+        logger.warning("kafka readiness check failed", exc_info=True)
+        return False
+
+
 async def default_check_http(base_url: str, timeout: float, name: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -79,6 +108,7 @@ class ReadinessChecker:
         check_auth: CheckFn | None = None,
         check_guardrails: CheckFn | None = None,
         check_rag: CheckFn | None = None,
+        check_kafka: CheckFn | None = None,
     ) -> None:
         self._settings = settings
         self._check_postgres = check_postgres
@@ -86,14 +116,16 @@ class ReadinessChecker:
         self._check_auth = check_auth
         self._check_guardrails = check_guardrails
         self._check_rag = check_rag
+        self._check_kafka = check_kafka
 
     async def check(self) -> ReadinessStatus:
-        postgres_ok, redis_ok, auth_ok, guardrails_ok, rag_ok = await asyncio.gather(
+        postgres_ok, redis_ok, auth_ok, guardrails_ok, rag_ok, kafka_ok = await asyncio.gather(
             self._postgres(),
             self._redis(),
             self._auth(),
             self._guardrails(),
             self._rag(),
+            self._kafka(),
         )
         return ReadinessStatus(
             postgres=postgres_ok,
@@ -101,6 +133,7 @@ class ReadinessChecker:
             auth=auth_ok,
             guardrails=guardrails_ok,
             rag=rag_ok,
+            kafka=kafka_ok,
         )
 
     async def _postgres(self) -> bool:
@@ -144,4 +177,12 @@ class ReadinessChecker:
             self._settings.rag_base_url,
             self._settings.rag_timeout,
             "rag",
+        )
+
+    async def _kafka(self) -> bool:
+        if self._check_kafka is not None:
+            return await self._check_kafka()
+        return await default_check_kafka(
+            self._settings.kafka_bootstrap_servers,
+            self._settings.kafka_publish_timeout_seconds,
         )

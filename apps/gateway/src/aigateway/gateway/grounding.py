@@ -64,9 +64,10 @@ def split_sentences(text: str) -> list[str]:
 def verify_answer(
     answer: str,
     chunks: list[RetrievedChunk],
-) -> tuple[str, list[Citation], float, int]:
+) -> tuple[str, list[Citation], float, int, bool]:
     """Redact secrets, drop unsupported sentences, and cite supporting chunks."""
     masked = mask_secrets(answer)
+    secret_redacted = masked != answer
     prepared = [(chunk, set(_tokens(chunk.content))) for chunk in chunks]
     kept: list[tuple[str, list[str]]] = []
     checked = 0
@@ -83,7 +84,7 @@ def verify_answer(
         supported += 1
     dropped = checked - supported
     if checked == 0 or supported == 0:
-        return I_DONT_KNOW, [], 0.0, dropped
+        return I_DONT_KNOW, [], 0.0, dropped, secret_redacted
     needed = {
         chunk.chunk_id
         for sentence, tokens in kept
@@ -97,7 +98,7 @@ def verify_answer(
         if chunk.chunk_id in needed
     ]
     text = " ".join(sentence for sentence, _claim in kept)
-    return text, cited, supported / checked, dropped
+    return text, cited, supported / checked, dropped, secret_redacted
 
 
 def _skip_space(text: str, index: int) -> int:

@@ -1,11 +1,21 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 7 checks each answer sentence against the retrieved chunks, drops anything that is not supported, and redacts secret spans in the model answer. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+Docker-first middleware between applications and LLM providers. Version 8 publishes metadata-only chat events to a single-node Kafka broker. Citation checks from Version 7 still drop unsupported sentences and redact secret spans. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+
+## What Version 8 does
+
+- One KRaft `apache/kafka` broker. Topics: `ai.requests`, `ai.responses`, `ai.security`, `ai.evaluations`, plus a `.dlq` topic for each. One partition and replication factor 1. The gateway creates them on startup and does not publish evaluation events.
+- After auth, one request event. When the HTTP status is decided, one response event. A security event is added for an input block, an output block, a `citation_unverified` redact, or an output secret redaction.
+- Payloads are metadata: ids, status, latency, rule ids, citation count, groundedness. No prompt, answer, chunk text, or secret span.
+- Publish timeout defaults to 0.5s. A broker error is logged and the chat HTTP status stays the same.
+- `GET /v1/ready` is 200 only if Postgres, Redis, auth, guardrails, rag, **and kafka** respond. Ready does not ping a live LLM.
+- The worker group `aigateway-analytics` counts those four topics. A message is retried 3 times, then written to that topic's dead-letter queue. Redis key `kafka:event:{event_id}` skips a redelivery that was already counted.
+- `GET /internal/v1/counts` on the worker requires `X-Internal-Token`. It is not a gateway route.
 
 ## What Version 7 does
 
 - `GET /v1/health` — process is up
-- `GET /v1/ready` — 200 only if Postgres, Redis, auth, guardrails, **and rag** respond
+- `GET /v1/ready` — 200 only if Postgres, Redis, auth, guardrails, rag, and kafka respond
 - `POST /v1/auth/login` — HS256 access JWT + refresh token
 - `POST /v1/chat` — JWT or `X-API-Key`, then hybrid retrieve (unless chitchat) and a grounded generate. Retrieval applies tenant, role, classification, and acl inside RAG, masks secrets in chunk text, reranks, and stops at 8000 characters. The gateway then drops any answer sentence that is not supported by one of those chunks, redacts secret spans in the answer, and returns `groundedness`. `debug: true` is only for `security_admin` and `platform_admin`
 - `POST` / `GET` / `DELETE /v1/documents` — `security_admin` (own tenant) or `platform_admin` (any `tenant_id`). JSON `{title, text}`
@@ -36,7 +46,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-You should see `gateway`, `auth`, `migrate` (exited 0), `worker`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
+You should see `gateway`, `auth`, `migrate` (exited 0), `worker`, `kafka`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
 
 ### Demo credentials (local Docker only)
 

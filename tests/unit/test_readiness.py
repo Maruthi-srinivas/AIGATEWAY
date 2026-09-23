@@ -20,6 +20,7 @@ def test_ready_ok_when_dependencies_pass() -> None:
         check_auth=_true,
         check_guardrails=_true,
         check_rag=_true,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
@@ -32,6 +33,7 @@ def test_ready_ok_when_dependencies_pass() -> None:
         "auth": True,
         "guardrails": True,
         "rag": True,
+        "kafka": True,
     }
 
 
@@ -43,6 +45,7 @@ def test_ready_503_when_redis_down() -> None:
         check_auth=_true,
         check_guardrails=_true,
         check_rag=_true,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
@@ -62,6 +65,7 @@ def test_ready_503_when_postgres_down() -> None:
         check_auth=_true,
         check_guardrails=_true,
         check_rag=_true,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
@@ -78,6 +82,7 @@ def test_ready_503_when_auth_down() -> None:
         check_auth=_false,
         check_guardrails=_true,
         check_rag=_true,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
@@ -94,6 +99,7 @@ def test_ready_503_when_guardrails_down() -> None:
         check_auth=_true,
         check_guardrails=_false,
         check_rag=_true,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
@@ -110,9 +116,27 @@ def test_ready_503_when_rag_down() -> None:
         check_auth=_true,
         check_guardrails=_true,
         check_rag=_false,
+        check_kafka=_true,
         auth_client=FakeAuthClient(),
     )
     with TestClient(app) as client:
         response = client.get("/v1/ready")
     assert response.status_code == 503
     assert response.json()["rag"] is False
+
+
+def test_ready_503_when_kafka_down() -> None:
+    app = create_app(
+        gateway_settings(),
+        check_postgres=_true,
+        check_redis=_true,
+        check_auth=_true,
+        check_guardrails=_true,
+        check_rag=_true,
+        check_kafka=_false,
+        auth_client=FakeAuthClient(),
+    )
+    with TestClient(app) as client:
+        response = client.get("/v1/ready")
+    assert response.status_code == 503
+    assert response.json()["kafka"] is False

@@ -31,6 +31,7 @@ from aigateway.gateway.documents import (
     handle_list_documents,
 )
 from aigateway.gateway.errors import register_exception_handlers
+from aigateway.gateway.events import KafkaEventPublisher, NullEventPublisher
 from aigateway.gateway.guardrail_client import HttpGuardrailClient
 from aigateway.gateway.llm import build_llm_client
 from aigateway.gateway.middleware import BodySizeLimitMiddleware, CorrelationIdMiddleware
@@ -55,12 +56,14 @@ def create_app(
     check_auth: CheckFn | None = None,
     check_guardrails: CheckFn | None = None,
     check_rag: CheckFn | None = None,
+    check_kafka: CheckFn | None = None,
     auth_client: HttpAuthClient | None = None,
     guardrail_client=None,
     rag_client=None,
     rate_limiter=None,
     chat_repo=None,
     llm_client=None,
+    event_publisher=None,
     session_cache: SessionCache | None = None,
     redis_client=None,
 ) -> FastAPI:
@@ -71,6 +74,7 @@ def create_app(
         check_auth=check_auth,
         check_guardrails=check_guardrails,
         check_rag=check_rag,
+        check_kafka=check_kafka,
     )
 
     @asynccontextmanager
@@ -85,7 +89,17 @@ def create_app(
             app.state.rag_client = HttpRagClient(settings, http_client)
         if app.state.llm_client is None:
             app.state.llm_client = build_llm_client(settings, http_client)
+        if app.state.event_publisher is None:
+            if settings.kafka_bootstrap_servers:
+                publisher = KafkaEventPublisher(settings)
+                await publisher.start()
+                app.state.event_publisher = publisher
+            else:
+                app.state.event_publisher = NullEventPublisher()
         yield
+        publisher = app.state.event_publisher
+        if isinstance(publisher, KafkaEventPublisher):
+            await publisher.stop()
         if app.state.redis is not None:
             await app.state.redis.aclose()
         await close_engine()
@@ -108,6 +122,7 @@ def create_app(
     app.state.rate_limiter = rate_limiter
     app.state.chat_repo = chat_repo
     app.state.llm_client = llm_client
+    app.state.event_publisher = event_publisher
     app.state.session_cache = session_cache
     app.state.redis = redis_client
 
@@ -146,15 +161,17 @@ def create_app(
             "auth": status.auth,
             "guardrails": status.guardrails,
             "rag": status.rag,
+            "kafka": status.kafka,
         }
         if not status.ok:
             logger.warning(
-                "readiness failed postgres=%s redis=%s auth=%s guardrails=%s rag=%s",
+                "readiness failed postgres=%s redis=%s auth=%s guardrails=%s rag=%s kafka=%s",
                 status.postgres,
                 status.redis,
                 status.auth,
                 status.guardrails,
                 status.rag,
+                status.kafka,
             )
             return JSONResponse(status_code=503, content=body)
         return JSONResponse(status_code=200, content=body)

@@ -42,6 +42,8 @@ class GatewaySettings(ServiceSettings):
     openai_api_key: str = ""
     llm_model: str = ""
     llm_timeout_seconds: float = Field(default=30.0, ge=0.1)
+    kafka_bootstrap_servers: str = ""
+    kafka_publish_timeout_seconds: float = Field(default=0.5, ge=0.1)
 
 
 class AuthSettings(ServiceSettings):
@@ -95,3 +97,14 @@ class RagSettings(ServiceSettings):
     rag_timeout_seconds: float = Field(default=2.0, ge=0.1)
     postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
     seed_enabled: bool = True
+
+
+class WorkerSettings(ServiceSettings):
+    """Worker process settings. Consumes Kafka and locks event ids in Redis."""
+
+    service_name: str = "worker"
+    redis_url: str
+    internal_auth_token: str
+    kafka_bootstrap_servers: str = "kafka:9092"
+    kafka_event_lock_seconds: int = Field(default=30, ge=1)
+    kafka_event_done_seconds: int = Field(default=86400, ge=1)

@@ -50,4 +50,5 @@ def unit_chat_deps(**kwargs):
         "guardrail_client": kwargs.get("guardrail_client", FakeGuardrail()),
         "rag_client": kwargs.get("rag_client", FakeRetriever()),
         "session_cache": kwargs.get("session_cache", SessionCache(None, ttl_seconds=60, limit=20)),
+        "event_publisher": kwargs.get("event_publisher"),
     }

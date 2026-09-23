@@ -8,6 +8,7 @@ dependencies = [
     "aigateway-contracts",
     "aigateway-telemetry",
     "alembic>=1.14",
+    "aiokafka>=0.12",
     "httpx>=0.27",
     "fastapi>=0.115",
     "psycopg[binary]>=3.2",

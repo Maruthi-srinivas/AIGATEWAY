@@ -5,8 +5,11 @@ description = "Async worker stub for AI Safety Gateway"
 requires-python = ">=3.12"
 dependencies = [
     "aigateway-config",
+    "aigateway-contracts",
     "aigateway-telemetry",
+    "aiokafka>=0.12",
     "fastapi>=0.115",
+    "redis>=5.2",
     "uvicorn[standard]>=0.32",
 ]
 

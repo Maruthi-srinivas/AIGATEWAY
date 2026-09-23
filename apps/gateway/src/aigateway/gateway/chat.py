@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -11,6 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from aigateway.contracts import (
     AuthContext,
     AuthorizationError,
+    ChatEvent,
     ChatRequest,
     ChatResponse,
     ConversationDetail,
@@ -115,6 +117,74 @@ async def audit_chat(
         "metadata": metadata or {},
     }
     await request.app.state.auth_client.write_audit(payload)
+    await _emit_chat_result(request, ctx, status_code=status_code)
+
+
+def _security_rule_ids(decisions: list[GuardrailDecision], secret_redacted: bool) -> list[str]:
+    rules = [item.rule_id for item in decisions if item.decision in {"block", "redact"}]
+    if secret_redacted and "pii" not in rules:
+        rules.append("pii")
+    return rules
+
+
+def _chat_event(
+    request: Request,
+    ctx: AuthContext | None,
+    *,
+    topic: str,
+    status_code: int | None,
+    metrics: dict,
+) -> ChatEvent:
+    started = getattr(request.state, "chat_started", None)
+    latency_ms = None
+    if started is not None and status_code is not None:
+        latency_ms = (time.perf_counter() - started) * 1000
+    return ChatEvent(
+        event_id=str(uuid.uuid4()),
+        correlation_id=correlation_id_var.get(),
+        tenant_id=ctx.tenant_id if ctx else None,
+        user_id=ctx.user_id if ctx else None,
+        topic=topic,
+        status_code=status_code,
+        latency_ms=latency_ms,
+        rule_ids=list(metrics.get("rule_ids") or []),
+        citation_count=metrics.get("citation_count"),
+        groundedness=metrics.get("groundedness"),
+    )
+
+
+async def _publish_event(request: Request, event: ChatEvent) -> None:
+    publisher = getattr(request.app.state, "event_publisher", None)
+    if publisher is None:
+        return
+    try:
+        await publisher.publish(event)
+    except Exception:
+        logger.warning("kafka publish failed topic=%s", event.topic)
+
+
+async def _emit_chat_result(
+    request: Request,
+    ctx: AuthContext | None,
+    *,
+    status_code: int,
+) -> None:
+    metrics = getattr(request.state, "chat_metrics", None) or {}
+    await _publish_event(
+        request,
+        _chat_event(request, ctx, topic="ai.responses", status_code=status_code, metrics=metrics),
+    )
+    if metrics.get("rule_ids"):
+        await _publish_event(
+            request,
+            _chat_event(
+                request,
+                ctx,
+                topic="ai.security",
+                status_code=status_code,
+                metrics=metrics,
+            ),
+        )
 
 
 async def consume_limit(request: Request, ctx: AuthContext, tenant_id: str) -> RateLimitResult:
@@ -175,6 +245,11 @@ async def resolve_write_conversation(
 
 async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | StreamingResponse:
     ctx = await require_auth(request)
+    request.state.chat_started = time.perf_counter()
+    await _publish_event(
+        request,
+        _chat_event(request, ctx, topic="ai.requests", status_code=None, metrics={}),
+    )
     settings = request.app.state.settings
     if len(body.message) > settings.chat_message_max_chars:
         await audit_chat(request, ctx, status_code=400, success=False)
@@ -266,6 +341,14 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
                 },
             }
         )
+        request.state.chat_metrics = {
+            "rule_ids": [
+                item.rule_id for item in check.decisions if item.decision in {"block", "redact"}
+            ],
+            "citation_count": 0,
+            "groundedness": None,
+        }
+        await _emit_chat_result(request, ctx, status_code=400)
         raise InputBlockedError(decisions=check.decisions)
 
     masked_user = check.texts[-1].content if check.texts else body.message
@@ -288,9 +371,12 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     retrieval_debug = None
     groundedness = None
     unsupported_count = 0
+    secret_redacted = False
     llm_messages = history
     if is_chitchat(masked_user):
-        raw_answer = mask_secrets(await _generate(request, ctx, llm_messages))
+        generated = await _generate(request, ctx, llm_messages)
+        raw_answer = mask_secrets(generated)
+        secret_redacted = raw_answer != generated
     else:
         try:
             retrieved = await request.app.state.rag_client.retrieve(
@@ -308,9 +394,13 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         else:
             llm_messages, _ = grounded_messages(history, retrieved.chunks)
             generated = await _generate(request, ctx, llm_messages)
-            raw_answer, citations, groundedness, unsupported_count = verify_answer(
-                generated, retrieved.chunks
-            )
+            (
+                raw_answer,
+                citations,
+                groundedness,
+                unsupported_count,
+                secret_redacted,
+            ) = verify_answer(generated, retrieved.chunks)
     try:
         outbound = await request.app.state.guardrail_client.check_output(
             tenant_id=tenant_id,
@@ -340,6 +430,11 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         str(conversation.id),
         [*history, {"role": "assistant", "content": answer}],
     )
+    request.state.chat_metrics = {
+        "rule_ids": _security_rule_ids(decisions, secret_redacted),
+        "citation_count": len(citations),
+        "groundedness": groundedness,
+    }
     await audit_chat(
         request,
         ctx,

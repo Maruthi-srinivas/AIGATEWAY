@@ -15,7 +15,9 @@ from aigateway.contracts.errors import (
     ValidationFailedError,
 )
 from aigateway.contracts.models import (
+    KAFKA_TOPICS,
     AuthContext,
+    ChatEvent,
     ChatRequest,
     ChatResponse,
     Citation,
@@ -40,6 +42,7 @@ from aigateway.contracts.models import (
     RetrievalDebugHit,
     RetrievedChunk,
     RetrieveResult,
+    kafka_dlq_topic,
 )
 from aigateway.contracts.ports import (
     AuthProvider,
@@ -54,6 +57,7 @@ __all__ = [
     "AuthProvider",
     "AuthenticationError",
     "AuthorizationError",
+    "ChatEvent",
     "ChatRequest",
     "ChatResponse",
     "Citation",
@@ -76,7 +80,9 @@ __all__ = [
     "GuardrailText",
     "GuardrailsUnavailableError",
     "InputBlockedError",
+    "kafka_dlq_topic",
     "JevAssessment",
+    "KAFKA_TOPICS",
     "LLMClient",
     "LlmUnavailableError",
     "LoginRequest",

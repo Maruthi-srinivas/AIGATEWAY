@@ -16,7 +16,7 @@ def test_decimal_stays_one_sentence() -> None:
 
 
 def test_half_of_the_tokens_is_enough() -> None:
-    text, citations, groundedness, dropped = verify_answer(
+    text, citations, groundedness, dropped, redacted = verify_answer(
         "Alpha beta.",
         [_chunk("alpha belongs in this note")],
     )
@@ -24,10 +24,11 @@ def test_half_of_the_tokens_is_enough() -> None:
     assert groundedness == 1.0
     assert dropped == 0
     assert citations
+    assert redacted is False
 
 
 def test_less_than_half_is_dropped() -> None:
-    text, citations, groundedness, dropped = verify_answer(
+    text, citations, groundedness, dropped, redacted = verify_answer(
         "Alpha beta gamma.",
         [_chunk("alpha only")],
     )
@@ -35,3 +36,4 @@ def test_less_than_half_is_dropped() -> None:
     assert citations == []
     assert groundedness == 0.0
     assert dropped == 1
+    assert redacted is False

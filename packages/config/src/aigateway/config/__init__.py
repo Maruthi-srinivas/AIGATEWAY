@@ -4,6 +4,7 @@ from aigateway.config.settings import (
     GuardrailsSettings,
     RagSettings,
     ServiceSettings,
+    WorkerSettings,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "GuardrailsSettings",
     "RagSettings",
     "ServiceSettings",
+    "WorkerSettings",
 ]

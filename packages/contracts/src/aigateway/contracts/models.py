@@ -138,6 +138,33 @@ class RetrievalDebug(BaseModel):
     hits: list[RetrievalDebugHit] = Field(default_factory=list)
 
 
+class ChatEvent(BaseModel):
+    """Metadata for one Kafka chat event. Never carries prompt, answer, or chunk text."""
+
+    event_id: str
+    correlation_id: str | None = None
+    tenant_id: str | None = None
+    user_id: str | None = None
+    topic: str
+    status_code: int | None = None
+    latency_ms: float | None = None
+    rule_ids: list[str] = Field(default_factory=list)
+    citation_count: int | None = None
+    groundedness: float | None = None
+
+
+KAFKA_TOPICS: tuple[str, ...] = (
+    "ai.requests",
+    "ai.responses",
+    "ai.security",
+    "ai.evaluations",
+)
+
+
+def kafka_dlq_topic(topic: str) -> str:
+    return f"{topic}.dlq"
+
+
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
