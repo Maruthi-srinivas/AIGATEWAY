@@ -44,6 +44,8 @@ class GatewaySettings(ServiceSettings):
     llm_timeout_seconds: float = Field(default=30.0, ge=0.1)
     kafka_bootstrap_servers: str = ""
     kafka_publish_timeout_seconds: float = Field(default=0.5, ge=0.1)
+    evals_base_url: str = ""
+    evals_timeout_seconds: float = Field(default=2.0, ge=0.1)
     cors_origins: str = "http://localhost:5173"
 
     @field_validator("cors_origins")
@@ -111,6 +113,15 @@ class RagSettings(ServiceSettings):
     rag_timeout_seconds: float = Field(default=2.0, ge=0.1)
     postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
     seed_enabled: bool = True
+
+
+class EvalsSettings(ServiceSettings):
+    """Evaluation store. Scores stay numeric. Prompt and answer text are not stored."""
+
+    service_name: str = "evals"
+    postgres_dsn: str
+    internal_auth_token: str
+    postgres_connect_timeout: float = Field(default=2.0, ge=0.1)
 
 
 class WorkerSettings(ServiceSettings):

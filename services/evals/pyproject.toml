@@ -1,12 +1,16 @@
 [project]
 name = "aigateway-evals"
 version = "0.1.0"
-description = "Evaluation service stub for AI Safety Gateway"
+description = "Lexical evaluation store for AI Safety Gateway"
 requires-python = ">=3.12"
 dependencies = [
     "aigateway-config",
+    "aigateway-contracts",
     "aigateway-telemetry",
+    "alembic>=1.14",
     "fastapi>=0.115",
+    "psycopg[binary]>=3.2",
+    "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.32",
 ]
 

@@ -1033,3 +1033,49 @@ def test_live_char_budget_limits_citations() -> None:
     assert len(body["citations"]) == 3
     assert any(hit["drop_reason"] == "char_budget" for hit in body["retrieval_debug"]["hits"])
     assert all("content" not in hit for hit in body["retrieval_debug"]["hits"])
+
+
+@skip_without_stack
+def test_live_evaluate_golden_report() -> None:
+    sec = _login("sec@hr.local")
+    response = httpx.post(
+        f"{GATEWAY_URL}/v1/evaluate",
+        json={},
+        headers=_bearer(sec),
+        timeout=90.0,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "met_target" in body
+    assert body["target_faithfulness"] == 0.95
+    ids = {item["case_id"] for item in body["cases"]}
+    assert "hr-pto" in ids
+    assert "hr-unknown-zebra" in ids
+    assert len(body["cases"]) == 10
+    assert all(item["faithfulness"] is not None for item in body["cases"])
+    assert "purple zebra" not in response.text
+    eng = _login("user@eng.local")
+    denied = httpx.post(
+        f"{GATEWAY_URL}/v1/evaluate",
+        json={},
+        headers=_bearer(eng),
+        timeout=10.0,
+    )
+    assert denied.status_code == 403
+
+
+@skip_without_stack
+def test_live_chat_json_has_no_eval_scores() -> None:
+    tokens = _login("user@hr.local")
+    response = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": "hello"},
+        headers=_bearer(tokens),
+        timeout=10.0,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "answer" in body
+    assert "groundedness" in body
+    assert "faithfulness" not in body
+    assert "context_recall" not in body

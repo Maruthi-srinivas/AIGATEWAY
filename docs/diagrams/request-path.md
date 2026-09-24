@@ -1,6 +1,28 @@
 # Request path
 
-## Version 9 (current)
+## Version 10 (current)
+
+The gateway is the only public port. `POST /v1/chat` still returns the Version 7 response. Before retrieve, the gateway looks up a Redis answer for the tenant, role, guardrail policy hash, and normalized query. A miss that comes back with groundedness under 0.5 retries retrieve once with stopwords removed and keeps the better answer. After a knowledge chat, the gateway stores numeric scores and publishes one `ai.evaluations` event. Both are best-effort. Chitchat does not. `POST /v1/evaluate` is a separate call for `security_admin` and `platform_admin`. It runs the checked-in HR golden set through chat and returns a report. A mean faithfulness under 0.95 is recorded and does not fail the suite.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant RAG
+    participant Evals
+    participant Kafka
+    Client->>Gateway: POST /v1/chat
+    Gateway->>Gateway: cache lookup
+    alt cache miss and weak grounding
+        Gateway->>RAG: retrieve original query
+        Gateway->>RAG: one retry without stopwords
+    end
+    Gateway-->>Client: existing ChatResponse
+    Gateway->>Evals: score row, best effort
+    Gateway->>Kafka: ai.evaluations metadata
+```
+
+## Version 9
 
 The gateway is the only public port. Chat, retrieval, citation checks, and Kafka publishes are unchanged from Version 8. After the HTTP status is chosen, the gateway exports a trace to Tempo and records a Prometheus observation. Both are best-effort. A failure there does not change the status returned to the client. Prometheus scrapes `GET /v1/metrics` and the internal `/metrics` routes. Grafana reads Prometheus and Tempo. `GET /v1/audit?correlation_id=` returns the caller's tenant rows for that id.
 

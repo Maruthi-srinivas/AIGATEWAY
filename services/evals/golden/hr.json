@@ -1,0 +1,12 @@
+[
+  {"id": "hr-pto", "question": "How many paid time off days?", "expected_terms": ["twenty", "days"]},
+  {"id": "hr-pto-allowance", "question": "What is the paid time off allowance?", "expected_terms": ["twenty", "days"]},
+  {"id": "hr-parental", "question": "How long is parental leave?", "expected_terms": ["sixteen", "weeks"]},
+  {"id": "hr-parental-weeks", "question": "How many weeks of parental leave?", "expected_terms": ["sixteen", "weeks"]},
+  {"id": "hr-eligible", "question": "Who is eligible for parental leave?", "expected_terms": ["eligible", "employees"]},
+  {"id": "hr-twenty", "question": "Is paid time off twenty days?", "expected_terms": ["twenty", "days"]},
+  {"id": "hr-sixteen", "question": "Does parental leave last sixteen weeks?", "expected_terms": ["sixteen", "weeks"]},
+  {"id": "hr-leave", "question": "What leave does Acme HR provide?", "expected_terms": ["paid", "time"]},
+  {"id": "hr-unknown-zebra", "question": "What is the purple zebra onboarding stipend zzxqwv?", "expected_terms": []},
+  {"id": "hr-unknown-zephyr", "question": "What is the qxzephyr sabbatical stipend?", "expected_terms": []}
+]

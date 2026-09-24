@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Literal
 
 import httpx
@@ -35,6 +37,11 @@ OUTPUT_JEV_RULES: dict[str, tuple[str, str]] = {
     "toxicity": ("jev_output_toxicity", "jev_output_toxicity_threshold"),
     "pii": ("jev_output_pii", "jev_output_pii_threshold"),
 }
+
+
+def policy_hash(policy: GuardrailPolicy) -> str:
+    raw = json.dumps(policy.model_dump(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _overall(decisions: list[GuardrailDecision]) -> Literal["allow", "redact", "block"]:
@@ -145,6 +152,7 @@ async def evaluate(
         decisions=decisions,
         texts=working,
         assessments=assessments,
+        policy_hash=policy_hash(policy),
     )
 
 
@@ -176,4 +184,5 @@ async def evaluate_output(
         decisions=decisions,
         texts=list(texts),
         assessments=assessments,
+        policy_hash=policy_hash(policy),
     )

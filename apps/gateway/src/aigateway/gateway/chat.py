@@ -15,10 +15,12 @@ from aigateway.contracts import (
     ChatEvent,
     ChatRequest,
     ChatResponse,
+    Citation,
     ConversationDetail,
     ConversationList,
     ConversationNotFoundError,
     ConversationSummary,
+    EvalsUnavailableError,
     GuardrailCheckResult,
     GuardrailDecision,
     GuardrailsUnavailableError,
@@ -32,6 +34,7 @@ from aigateway.contracts import (
     RateLimiterUnavailableError,
     ValidationFailedError,
 )
+from aigateway.gateway.answer_cache import AnswerCache, cache_key
 from aigateway.gateway.classify import is_chitchat
 from aigateway.gateway.deps import effective_tenant_id, require_auth, require_chat_role
 from aigateway.gateway.grounding import (
@@ -40,6 +43,7 @@ from aigateway.gateway.grounding import (
     mask_secrets,
     verify_answer,
 )
+from aigateway.gateway.heal import rewrite_query
 from aigateway.gateway.rate_limit import RateLimitResult
 from aigateway.gateway.repository import (
     ConversationRecord,
@@ -150,6 +154,10 @@ def _chat_event(
         rule_ids=list(metrics.get("rule_ids") or []),
         citation_count=metrics.get("citation_count"),
         groundedness=metrics.get("groundedness"),
+        context_recall=metrics.get("context_recall"),
+        context_precision=metrics.get("context_precision"),
+        answer_correctness=metrics.get("answer_correctness"),
+        eval_status=metrics.get("eval_status"),
     )
 
 
@@ -241,6 +249,179 @@ async def resolve_write_conversation(
     if not is_owner(record, ctx):
         raise AuthorizationError("conversation access is forbidden")
     return record
+
+
+async def _cached_answer(
+    request: Request,
+    tenant_id: str,
+    role: str,
+    policy_hash: str,
+    query: str,
+) -> dict | None:
+    cache: AnswerCache | None = getattr(request.app.state, "answer_cache", None)
+    if cache is None:
+        return None
+    return await cache.get(cache_key(tenant_id, role, policy_hash, query))
+
+
+async def _store_cached_answer(
+    request: Request,
+    tenant_id: str,
+    role: str,
+    policy_hash: str,
+    query: str,
+    answer: str,
+    citations: list,
+    groundedness: float,
+) -> None:
+    cache: AnswerCache | None = getattr(request.app.state, "answer_cache", None)
+    if cache is None:
+        return
+    await cache.set(
+        cache_key(tenant_id, role, policy_hash, query),
+        {
+            "answer": answer,
+            "citations": [item.model_dump() for item in citations],
+            "groundedness": groundedness,
+        },
+    )
+
+
+async def _knowledge_answer(
+    request: Request,
+    ctx: AuthContext,
+    history: list[dict[str, str]],
+    query: str,
+    *,
+    tenant_id: str,
+    debug: bool,
+):
+    try:
+        with span("retrieve"):
+            retrieved = await request.app.state.rag_client.retrieve(
+                tenant_id=tenant_id,
+                query=query,
+                role=ctx.role,
+                debug=debug,
+            )
+    except RagUnavailableError as exc:
+        await audit_chat(request, ctx, status_code=503, success=False)
+        raise exc
+    return await _finish_retrieval(request, ctx, history, query, retrieved, tenant_id, debug)
+
+
+async def _finish_retrieval(request, ctx, history, query, retrieved, tenant_id: str, debug: bool):
+    if not retrieved.chunks:
+        return mask_secrets(I_DONT_KNOW), [], None, 0, False, [], retrieved.debug, False
+    llm_messages, _ = grounded_messages(history, retrieved.chunks)
+    generated = await _generate(request, ctx, llm_messages)
+    with span("citation"):
+        raw_answer, citations, groundedness, dropped, secret_redacted = verify_answer(
+            generated, retrieved.chunks
+        )
+    rewritten = rewrite_query(query)
+    normalized = " ".join(query.lower().split())
+    if groundedness is not None and groundedness < 0.5 and rewritten and rewritten != normalized:
+        try:
+            with span("retrieve"):
+                second = await request.app.state.rag_client.retrieve(
+                    tenant_id=tenant_id,
+                    query=rewritten,
+                    role=ctx.role,
+                    debug=debug,
+                )
+        except RagUnavailableError as exc:
+            await audit_chat(request, ctx, status_code=503, success=False)
+            raise exc
+        if second.chunks:
+            llm_messages, _ = grounded_messages(history, second.chunks)
+            generated = await _generate(request, ctx, llm_messages)
+            with span("citation"):
+                raw2, cit2, ground2, dropped2, secret2 = verify_answer(generated, second.chunks)
+            if (ground2 or 0) >= (groundedness or 0):
+                return raw2, cit2, ground2, dropped2, secret2, second.chunks, second.debug, True
+        return (
+            raw_answer,
+            citations,
+            groundedness,
+            dropped,
+            secret_redacted,
+            retrieved.chunks,
+            retrieved.debug,
+            True,
+        )
+    return (
+        raw_answer,
+        citations,
+        groundedness,
+        dropped,
+        secret_redacted,
+        retrieved.chunks,
+        retrieved.debug,
+        False,
+    )
+
+
+async def _record_evaluation(
+    request: Request,
+    ctx: AuthContext | None,
+    *,
+    tenant_id: str,
+    answer: str,
+    chunks: list,
+    groundedness: float | None,
+    citation_count: int,
+    chitchat: bool,
+    had_chunks: bool,
+) -> None:
+    texts = [getattr(chunk, "content", chunk) for chunk in chunks]
+    request.state.eval_chunks = texts
+    if chitchat:
+        return
+    status = "scored"
+    if had_chunks and groundedness is not None and groundedness < 0.5:
+        status = "review"
+    client = getattr(request.app.state, "evals_client", None)
+    scored = None
+    if client is not None:
+        try:
+            scored = await client.store(
+                {
+                    "tenant_id": tenant_id,
+                    "correlation_id": correlation_id_var.get(),
+                    "answer": answer,
+                    "chunks": texts,
+                    "expected_terms": [],
+                    "groundedness": groundedness,
+                    "status": status,
+                }
+            )
+        except EvalsUnavailableError:
+            logger.warning("evaluation store failed")
+    faithfulness = groundedness
+    if scored is not None and scored.faithfulness is not None:
+        faithfulness = scored.faithfulness
+    recall = scored.context_recall if scored is not None else None
+    precision = scored.context_precision if scored is not None else None
+    correctness = scored.answer_correctness if scored is not None else None
+    eval_status = scored.status if scored is not None else status
+    await _publish_event(
+        request,
+        _chat_event(
+            request,
+            ctx,
+            topic="ai.evaluations",
+            status_code=200,
+            metrics={
+                "groundedness": faithfulness,
+                "context_recall": recall,
+                "context_precision": precision,
+                "answer_correctness": correctness,
+                "eval_status": eval_status,
+                "citation_count": citation_count,
+            },
+        ),
+    )
 
 
 async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | StreamingResponse:
@@ -383,36 +564,44 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     unsupported_count = 0
     secret_redacted = False
     llm_messages = history
+    eval_chunks: list = []
+    retried = False
     if is_chitchat(masked_user):
         generated = await _generate(request, ctx, llm_messages)
         raw_answer = mask_secrets(generated)
         secret_redacted = raw_answer != generated
     else:
-        try:
-            with span("retrieve"):
-                retrieved = await request.app.state.rag_client.retrieve(
-                    tenant_id=tenant_id,
-                    query=masked_user,
-                    role=ctx.role,
-                    debug=body.debug,
-                )
-        except RagUnavailableError as exc:
-            await audit_chat(request, ctx, status_code=503, success=False)
-            raise exc
-        retrieval_debug = retrieved.debug
-        if not retrieved.chunks:
-            raw_answer = mask_secrets(I_DONT_KNOW)
+        cached = None
+        if not body.debug and not body.stream:
+            cached = await _cached_answer(
+                request,
+                tenant_id,
+                ctx.role,
+                check.policy_hash,
+                masked_user,
+            )
+        if cached is not None:
+            raw_answer = str(cached["answer"])
+            citations = [Citation(**item) for item in cached["citations"]]
+            groundedness = cached.get("groundedness")
         else:
-            llm_messages, _ = grounded_messages(history, retrieved.chunks)
-            generated = await _generate(request, ctx, llm_messages)
-            with span("citation"):
-                (
-                    raw_answer,
-                    citations,
-                    groundedness,
-                    unsupported_count,
-                    secret_redacted,
-                ) = verify_answer(generated, retrieved.chunks)
+            (
+                raw_answer,
+                citations,
+                groundedness,
+                unsupported_count,
+                secret_redacted,
+                eval_chunks,
+                retrieval_debug,
+                retried,
+            ) = await _knowledge_answer(
+                request,
+                ctx,
+                history,
+                masked_user,
+                tenant_id=tenant_id,
+                debug=body.debug,
+            )
     try:
         with span("guardrails"):
             outbound = await request.app.state.guardrail_client.check_output(
@@ -436,6 +625,24 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         request.state.metrics_outcome = "redacted"
     else:
         request.state.metrics_outcome = "allowed"
+    if (
+        not body.debug
+        and not body.stream
+        and not is_chitchat(masked_user)
+        and outbound.decision != "block"
+        and groundedness is not None
+        and groundedness >= 0.5
+    ):
+        await _store_cached_answer(
+            request,
+            tenant_id,
+            ctx.role,
+            check.policy_hash,
+            masked_user,
+            answer,
+            citations,
+            groundedness,
+        )
     assistant = await request.app.state.chat_repo.add_message(
         conversation_id=conversation.id,
         tenant_id=uuid.UUID(tenant_id),
@@ -463,7 +670,19 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
             "output_blocked": outbound.decision == "block",
             "groundedness": groundedness,
             "unsupported_count": unsupported_count,
+            "retried": retried,
         },
+    )
+    await _record_evaluation(
+        request,
+        ctx,
+        tenant_id=tenant_id,
+        answer=answer,
+        chunks=eval_chunks,
+        groundedness=groundedness,
+        citation_count=len(citations),
+        chitchat=is_chitchat(masked_user),
+        had_chunks=bool(eval_chunks),
     )
     payload = ChatResponse(
         answer=answer,

@@ -82,6 +82,7 @@ class GuardrailCheckResult(BaseModel):
     decisions: list[GuardrailDecision] = Field(default_factory=list)
     texts: list[GuardrailText] = Field(default_factory=list)
     assessments: list[JevAssessment] = Field(default_factory=list)
+    policy_hash: str = ""
 
 
 class GuardrailPolicy(BaseModel):
@@ -151,6 +152,10 @@ class ChatEvent(BaseModel):
     rule_ids: list[str] = Field(default_factory=list)
     citation_count: int | None = None
     groundedness: float | None = None
+    context_recall: float | None = None
+    context_precision: float | None = None
+    answer_correctness: float | None = None
+    eval_status: str | None = None
 
 
 KAFKA_TOPICS: tuple[str, ...] = (
@@ -267,3 +272,29 @@ class EvaluationResult(BaseModel):
     context_precision: float | None = None
     answer_correctness: float | None = None
     latency_ms: float | None = None
+    status: str = "scored"
+
+
+class EvaluationCase(BaseModel):
+    case_id: str
+    faithfulness: float | None = None
+    context_recall: float | None = None
+    context_precision: float | None = None
+    answer_correctness: float | None = None
+    latency_ms: float | None = None
+    status: str = "scored"
+
+
+class EvaluationReport(BaseModel):
+    run_id: str
+    target_faithfulness: float = 0.95
+    met_target: bool
+    mean_faithfulness: float | None = None
+    cases: list[EvaluationCase] = Field(default_factory=list)
+
+
+class EvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: str | None = None
+    feedback: Literal["up", "down"] | None = None

@@ -1,6 +1,16 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 9 adds Prometheus, Grafana, and Tempo beside the chat path. Citation checks and metadata-only Kafka events stay in place. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+Docker-first middleware between applications and LLM providers. Version 10 adds a lexical golden-set evaluator, one retrieval retry, and a tenant-scoped answer cache. Chat JSON stays the same. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+
+## What Version 10 does
+
+- `services/evals/golden/hr.json` holds eight Acme HR leave questions and two I-don't-know questions. Each case has a question and expected terms. There is no expected answer text.
+- `POST /v1/evaluate` is for `security_admin` and `platform_admin`. The gateway runs those questions through the normal chat path and stores the run. The report includes `target_faithfulness` 0.95 and `met_target`. A score under 95% is tracked and does not fail the suite.
+- After a knowledge chat, the gateway best-effort stores a numeric row and publishes one `ai.evaluations` event. No prompt or answer text. Chitchat skips this. Chat still returns 200 if evals is down. `POST /v1/evaluate` returns 503 `evals_unavailable` when that service is down. `/v1/ready` does not check evals.
+- If retrieved chunks come back with groundedness under 0.5, retrieve runs once more with stopwords removed. The better answer is kept. The no-chunk I-don't-know path does not retry.
+- The Redis answer key is tenant, role, policy hash, and the SHA256 of the normalized query. Blocks, `debug: true`, and streams are not cached. A hit still runs the output guardrail check. Ingest and delete clear that tenant's cached answers.
+- Optional `feedback` on `POST /v1/evaluate` is `up` or `down`. It is not a chat field.
+- Gateway OpenAPI is **0.9.0**.
 
 ## What Version 9 does
 
@@ -225,7 +235,7 @@ Schema changes: add an Alembic revision under `services/auth/alembic/versions/` 
 | `services/guardrails` | Input checks, Perspective or fixture moderation, Jev fixture or live, policy Alembic |
 | `services/rag` | Documents, chunks, fixture or live embeddings, vector retrieve, RAG Alembic |
 | `apps/worker` | Worker stub |
-| `services/evals` | Evals stub |
+| `services/evals` | Lexical scores and golden set |
 | `packages/contracts` | Models and Protocol ports |
 | `packages/config` | Environment settings |
 | `packages/telemetry` | JSON logs, correlation / user / tenant IDs |

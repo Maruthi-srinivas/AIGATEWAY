@@ -9,6 +9,7 @@ from aigateway.contracts import (
     AuthorizationError,
     ConversationNotFoundError,
     DocumentNotFoundError,
+    EvalsUnavailableError,
     GuardrailsUnavailableError,
     InputBlockedError,
     LlmUnavailableError,
@@ -116,6 +117,10 @@ def register_exception_handlers(app) -> None:
 
     @app.exception_handler(LlmUnavailableError)
     async def _llm_down(_, exc: LlmUnavailableError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
+    @app.exception_handler(EvalsUnavailableError)
+    async def _evals_down(_, exc: EvalsUnavailableError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
 
     @app.exception_handler(RequestValidationError)

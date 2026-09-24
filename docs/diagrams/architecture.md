@@ -1,8 +1,8 @@
-# Architecture (implemented through Version 8)
+# Architecture (implemented through Version 10)
 
-Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.8.0**.
+Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, evals, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.9.0**.
 
-This is what is running now. Grafana, Kubernetes, Prometheus, and golden-set faithfulness evals are later versions. `services/evals` is a health stub and is not on the request path.
+This is what is running now. Kubernetes is a later version. `services/evals` stores numeric scores. The gateway calls it after a knowledge chat and from `POST /v1/evaluate`. Chat and `/v1/ready` do not fail when evals is down.
 
 Chat sequence detail lives in [request-path.md](request-path.md).
 
@@ -21,7 +21,7 @@ flowchart LR
         Guard["guardrails<br/>input and output checks"]
         RAG["rag<br/>documents, hybrid search"]
         Worker["worker<br/>analytics consumer"]
-        Evals["evals<br/>health stub only"]
+        Evals["evals<br/>numeric scores"]
     end
 
     subgraph data ["Data plane"]
@@ -60,7 +60,7 @@ Solid arrows are always used. Dashed arrows are used only when that provider is 
 
 The `web` container (published on port 5173) is a static client, not a hop on this diagram. The browser loads the console from `web` and then calls only public `/v1` routes on `localhost:8000`. The gateway allows that browser origin through `CORS_ORIGINS` (default `http://localhost:5173`). The console does not receive `INTERNAL_AUTH_TOKEN` or any other service secret, and it does not call worker counts.
 
-`migrate` runs once at startup: auth schema, then gateway, then guardrails, then rag. It exits 0 before the app containers serve traffic.
+`migrate` runs once at startup: auth schema, then gateway, then guardrails, then rag, then evals. It exits 0 before the app containers serve traffic.
 
 ## What each container owns
 
@@ -71,7 +71,7 @@ The `web` container (published on port 5173) is a static client, not a hop on th
 | `guardrails` | Input rules, per-tenant policy, Perspective or fixture moderation, Jev fixture or live, thin output check | Retrieval, generation |
 | `rag` | Ingest, chunk, embed, hybrid retrieve, ACL, secret masking in chunk text | Generation |
 | `worker` | Consume metadata events, count them, dead-letter after 3 retries | HTTP chat status |
-| `evals` | `GET /health` only | Scoring. The gateway does not call it and does not publish `ai.evaluations` |
+| `evals` | Golden set, lexical scores, evaluation rows | Prompt text, answer text, chunk text |
 | `web` | Static explainer and playground for the public API | Internal routes, service secrets, generation, and a place on the request path |
 
 Shared libraries (no service imports):

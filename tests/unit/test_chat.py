@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from aigateway.contracts import (
     AuthContext,
+    EvalsUnavailableError,
     GuardrailCheckResult,
     GuardrailDecision,
     GuardrailPolicyUpdate,
@@ -942,3 +943,52 @@ def test_raising_exporter_keeps_the_chat_status() -> None:
         assert response.status_code == 200
     finally:
         set_span_hook(None)
+
+
+class RaisingEvals:
+    async def store(self, body: dict) -> None:
+        _ = body
+        raise EvalsUnavailableError()
+
+    async def golden(self) -> list[dict]:
+        raise EvalsUnavailableError()
+
+
+def test_weak_grounding_retries_once_without_stopwords() -> None:
+    fact = _chunk()
+    retriever = FakeRetriever(chunks=[fact])
+    app = _app(rag_client=retriever, llm_client=ScriptedLLM("The moon is made of cheese."))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "How many paid time off days?"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    assert len(retriever.calls) == 2
+    assert retriever.calls[1]["query"] == "paid time off days?"
+
+
+def test_raising_evals_client_keeps_chat_status() -> None:
+    fact = _chunk()
+    app = _app(
+        rag_client=FakeRetriever(chunks=[fact]),
+        llm_client=ScriptedLLM(fact.content),
+        evals_client=RaisingEvals(),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat",
+            json={"message": "How many paid time off days?"},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+    assert "faithfulness" not in response.json()
+
+
+def test_app_user_cannot_evaluate() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post("/v1/evaluate", json={}, headers=AUTH)
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"

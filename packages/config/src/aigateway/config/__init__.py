@@ -1,5 +1,6 @@
 from aigateway.config.settings import (
     AuthSettings,
+    EvalsSettings,
     GatewaySettings,
     GuardrailsSettings,
     RagSettings,
@@ -9,6 +10,7 @@ from aigateway.config.settings import (
 
 __all__ = [
     "AuthSettings",
+    "EvalsSettings",
     "GatewaySettings",
     "GuardrailsSettings",
     "RagSettings",

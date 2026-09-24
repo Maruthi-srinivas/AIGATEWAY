@@ -85,16 +85,24 @@ version = "0.1.0"
 source = { editable = "services/evals" }
 dependencies = [
     { name = "aigateway-config" },
+    { name = "aigateway-contracts" },
     { name = "aigateway-telemetry" },
+    { name = "alembic" },
     { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aigateway-config", editable = "packages/config" },
+    { name = "aigateway-contracts", editable = "packages/contracts" },
     { name = "aigateway-telemetry", editable = "packages/telemetry" },
+    { name = "alembic", specifier = ">=1.14" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 

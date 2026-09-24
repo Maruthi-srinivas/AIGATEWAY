@@ -122,6 +122,14 @@ class LlmUnavailableError(Exception):
         super().__init__(detail)
 
 
+class EvalsUnavailableError(Exception):
+    def __init__(self, detail: str = "evals unavailable") -> None:
+        self.detail = detail
+        self.code = "evals_unavailable"
+        self.status_code = 503
+        super().__init__(detail)
+
+
 class DocumentNotFoundError(Exception):
     def __init__(self, detail: str = "document not found") -> None:
         self.detail = detail

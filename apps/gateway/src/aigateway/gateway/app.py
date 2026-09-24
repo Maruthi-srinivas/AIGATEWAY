@@ -18,9 +18,12 @@ from aigateway.contracts import (
     DocumentDetail,
     DocumentIngest,
     DocumentList,
+    EvaluateRequest,
+    EvaluationReport,
     GuardrailPolicy,
     GuardrailPolicyUpdate,
 )
+from aigateway.gateway.answer_cache import AnswerCache
 from aigateway.gateway.auth_client import HttpAuthClient
 from aigateway.gateway.chat import handle_chat, handle_get_conversation, handle_list_conversations
 from aigateway.gateway.db import close_engine, init_engine
@@ -32,6 +35,8 @@ from aigateway.gateway.documents import (
     handle_list_documents,
 )
 from aigateway.gateway.errors import register_exception_handlers
+from aigateway.gateway.evals_client import HttpEvalsClient, NullEvalsClient
+from aigateway.gateway.evaluate import handle_evaluate
 from aigateway.gateway.events import KafkaEventPublisher, NullEventPublisher
 from aigateway.gateway.guardrail_client import HttpGuardrailClient
 from aigateway.gateway.llm import build_llm_client
@@ -71,6 +76,8 @@ def create_app(
     event_publisher=None,
     session_cache: SessionCache | None = None,
     redis_client=None,
+    evals_client=None,
+    answer_cache: AnswerCache | None = None,
 ) -> FastAPI:
     checker = ReadinessChecker(
         settings,
@@ -101,6 +108,11 @@ def create_app(
                 app.state.event_publisher = publisher
             else:
                 app.state.event_publisher = NullEventPublisher()
+        if app.state.evals_client is None:
+            if settings.evals_base_url:
+                app.state.evals_client = HttpEvalsClient(settings, http_client)
+            else:
+                app.state.evals_client = NullEvalsClient()
         yield
         publisher = app.state.event_publisher
         if isinstance(publisher, KafkaEventPublisher):
@@ -112,7 +124,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.8.0",
+        version="0.9.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
@@ -140,6 +152,8 @@ def create_app(
     app.state.event_publisher = event_publisher
     app.state.session_cache = session_cache
     app.state.redis = redis_client
+    app.state.evals_client = evals_client
+    app.state.answer_cache = answer_cache
 
     async def ensure_runtime() -> None:
         if app.state.redis is None and app.state.rate_limiter is None:
@@ -157,6 +171,8 @@ def create_app(
                 ttl_seconds=settings.session_cache_ttl_seconds,
                 limit=settings.session_cache_message_limit,
             )
+        if app.state.answer_cache is None:
+            app.state.answer_cache = AnswerCache(app.state.redis)
         if app.state.llm_client is None:
             app.state.llm_client = build_llm_client(settings, app.state.http_client)
 
@@ -212,6 +228,18 @@ def create_app(
     )
     async def chat(request: Request, body: ChatRequest):
         return await handle_chat(request, body)
+
+    @app.post(
+        "/v1/evaluate",
+        tags=["evals"],
+        response_model=EvaluationReport,
+        responses={
+            403: {"description": "Forbidden"},
+            503: {"description": "Evaluation service unavailable"},
+        },
+    )
+    async def evaluate(request: Request, body: EvaluateRequest | None = None) -> EvaluationReport:
+        return await handle_evaluate(request, body or EvaluateRequest())
 
     @app.get("/v1/guardrails/policy", tags=["guardrails"])
     async def get_policy(request: Request, tenant_id: str | None = None) -> GuardrailPolicy:

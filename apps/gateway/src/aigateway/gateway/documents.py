@@ -13,6 +13,12 @@ from aigateway.contracts import (
 from aigateway.gateway.deps import effective_tenant_id, require_auth, require_policy_role
 
 
+async def _drop_answer_cache(request: Request, tenant_id: str) -> None:
+    cache = getattr(request.app.state, "answer_cache", None)
+    if cache is not None:
+        await cache.invalidate_tenant(tenant_id)
+
+
 def _requested_tenant(tenant_id: str | None) -> str | None:
     if tenant_id is None:
         return None
@@ -27,7 +33,9 @@ async def handle_ingest(request: Request, body: DocumentIngest, tenant_id: str |
     ctx = await require_auth(request)
     require_policy_role(ctx)
     effective = effective_tenant_id(ctx, _requested_tenant(tenant_id))
-    return await request.app.state.rag_client.ingest(effective, body, ctx.user_id)
+    created = await request.app.state.rag_client.ingest(effective, body, ctx.user_id)
+    await _drop_answer_cache(request, effective)
+    return created
 
 
 async def handle_list_documents(
@@ -67,4 +75,5 @@ async def handle_delete_document(
         raise ValidationFailedError("invalid document id") from exc
     effective = effective_tenant_id(ctx, _requested_tenant(tenant_id))
     await request.app.state.rag_client.delete_document(effective, document_id)
+    await _drop_answer_cache(request, effective)
     return {"status": "ok"}
