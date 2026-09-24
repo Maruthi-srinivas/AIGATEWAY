@@ -3,11 +3,19 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aigateway.auth.models import AuditLog
 from aigateway.contracts import AuthContext
 from aigateway.telemetry import correlation_id_var
+
+
+def select_audit(tenant_id: str, correlation_id: str | None):
+    statement = select(AuditLog).where(AuditLog.tenant_id == uuid.UUID(tenant_id))
+    if correlation_id:
+        statement = statement.where(AuditLog.correlation_id == correlation_id)
+    return statement.order_by(AuditLog.created_at.desc()).limit(200)
 
 
 async def write_audit(

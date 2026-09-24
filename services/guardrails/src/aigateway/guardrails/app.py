@@ -5,14 +5,21 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from aigateway.config import GuardrailsSettings
 from aigateway.contracts import AuthenticationError, GuardrailsUnavailableError
 from aigateway.guardrails.db import close_engine, init_engine
 from aigateway.guardrails.middleware import CorrelationIdMiddleware
 from aigateway.guardrails.routes import router
-from aigateway.telemetry import correlation_id_var, get_logger, setup_logging
+from aigateway.telemetry import (
+    correlation_id_var,
+    get_logger,
+    render_metrics,
+    setup_logging,
+    setup_telemetry,
+    trace_request,
+)
 
 logger = get_logger(__name__)
 
@@ -31,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: GuardrailsSettings) -> FastAPI:
     setup_logging(settings.service_name, settings.log_level)
+    setup_telemetry(settings.service_name)
     app = FastAPI(
         title="AI Safety Gateway Guardrails",
         version="0.4.0",
@@ -38,11 +46,17 @@ def create_app(settings: GuardrailsSettings) -> FastAPI:
     )
     app.state.settings = settings
     app.add_middleware(CorrelationIdMiddleware)
+    app.middleware("http")(trace_request)
     app.include_router(router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": settings.service_name}
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        body, content_type = render_metrics()
+        return Response(content=body, media_type=content_type)
 
     @app.exception_handler(AuthenticationError)
     async def _unauthenticated(request: Request, exc: AuthenticationError) -> JSONResponse:

@@ -14,6 +14,7 @@ WORKER_URL = os.getenv("WORKER_URL")
 RAG_URL = os.getenv("RAG_URL")
 GUARDRAILS_URL = os.getenv("GUARDRAILS_URL")
 EVALS_URL = os.getenv("EVALS_URL")
+GRAFANA_URL = os.getenv("GRAFANA_URL")
 SEED_PASSWORD = os.getenv("SEED_PASSWORD", "changeme")
 SEED_HR_API_KEY = os.getenv("SEED_HR_API_KEY", "agt_demo_hr_local_docker_only_key")
 
@@ -52,6 +53,56 @@ def test_live_gateway_ready() -> None:
     assert body["guardrails"] is True
     assert body["rag"] is True
     assert body["kafka"] is True
+
+
+@skip_without_stack
+def test_live_metrics_hide_the_prompt() -> None:
+    tokens = _login("user@hr.local")
+    chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": "hello"},
+        headers=_bearer(tokens),
+        timeout=10.0,
+    )
+    assert chat.status_code == 200
+    metrics = httpx.get(f"{GATEWAY_URL}/v1/metrics", timeout=5.0)
+    assert metrics.status_code == 200
+    assert "aigateway_http_request_duration_seconds" in metrics.text
+    assert "hello" not in metrics.text
+
+
+@skip_without_stack
+def test_live_audit_filters_by_correlation_id() -> None:
+    tokens = _login("user@hr.local")
+    chat = httpx.post(
+        f"{GATEWAY_URL}/v1/chat",
+        json={"message": "hello"},
+        headers=_bearer(tokens),
+        timeout=10.0,
+    )
+    assert chat.status_code == 200
+    cid = chat.headers["x-correlation-id"]
+    sec = _login("sec@hr.local")
+    audit = httpx.get(
+        f"{GATEWAY_URL}/v1/audit",
+        params={"correlation_id": cid},
+        headers=_bearer(sec),
+        timeout=5.0,
+    )
+    assert audit.status_code == 200
+    rows = audit.json()
+    assert rows
+    assert all(row["correlation_id"] == cid for row in rows)
+    assert any(row["action"] == "chat.attempt" for row in rows)
+    eng = _login("user@eng.local")
+    other = httpx.get(
+        f"{GATEWAY_URL}/v1/audit",
+        params={"correlation_id": cid},
+        headers=_bearer(eng),
+        timeout=5.0,
+    )
+    assert other.status_code == 200
+    assert other.json() == []
 
 
 @skip_without_stack
@@ -323,6 +374,12 @@ def test_live_evals_health() -> None:
     response = httpx.get(f"{EVALS_URL}/health", timeout=5.0)
     assert response.status_code == 200
     assert response.json()["service"] == "evals"
+
+
+@pytest.mark.skipif(not GRAFANA_URL, reason="GRAFANA_URL is unset")
+def test_live_grafana_health() -> None:
+    response = httpx.get(f"{GRAFANA_URL}/api/health", timeout=5.0)
+    assert response.status_code == 200
 
 
 def _bearer(tokens: dict) -> dict[str, str]:

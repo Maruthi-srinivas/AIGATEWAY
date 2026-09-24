@@ -6,7 +6,7 @@ from typing import Any
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from aigateway.telemetry import get_logger
+from aigateway.telemetry import get_logger, observe_session_cache
 
 logger = get_logger(__name__)
 
@@ -27,12 +27,16 @@ class SessionCache:
             raw = await self._redis.get(self.key(tenant_id, conversation_id))
         except RedisError:
             logger.warning("session cache get failed", exc_info=True)
+            observe_session_cache("error")
             return None
         if not raw:
+            observe_session_cache("miss")
             return None
         payload: Any = json.loads(raw)
         if isinstance(payload, list):
+            observe_session_cache("hit")
             return payload[-self._limit :]
+        observe_session_cache("miss")
         return None
 
     async def set(

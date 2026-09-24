@@ -1,6 +1,24 @@
 # Request path
 
-## Version 8 (current)
+## Version 9 (current)
+
+The gateway is the only public port. Chat, retrieval, citation checks, and Kafka publishes are unchanged from Version 8. After the HTTP status is chosen, the gateway exports a trace to Tempo and records a Prometheus observation. Both are best-effort. A failure there does not change the status returned to the client. Prometheus scrapes `GET /v1/metrics` and the internal `/metrics` routes. Grafana reads Prometheus and Tempo. `GET /v1/audit?correlation_id=` returns the caller's tenant rows for that id.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant Tempo
+    participant Prometheus
+    participant Grafana
+    Client->>Gateway: POST /v1/chat
+    Gateway->>Tempo: spans, best effort
+    Gateway-->>Client: existing HTTP status
+    Prometheus->>Gateway: scrape GET /v1/metrics
+    Grafana->>Prometheus: latency, blocks, RAG misses
+```
+
+## Version 8
 
 The gateway is the only public port. After auth it publishes one `ai.requests` metadata event. Input guardrails, hybrid retrieve, grounded generate, secret redaction, citation verification, and the Jev output check are unchanged from Version 7. When the HTTP status is decided, the gateway publishes one `ai.responses` event and, for a block or redact, one `ai.security` event. Those publishes sit beside the HTTP response. A broker timeout or error is logged and does not change the status returned to the client. The worker consumes `ai.requests`, `ai.responses`, `ai.security`, and `ai.evaluations` in group `aigateway-analytics`. The gateway does not publish evaluation events. Payloads have no prompt, answer, chunk text, or secret span.
 

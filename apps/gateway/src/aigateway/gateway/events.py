@@ -8,7 +8,7 @@ from aiokafka.errors import TopicAlreadyExistsError
 
 from aigateway.config import GatewaySettings
 from aigateway.contracts import KAFKA_TOPICS, ChatEvent, kafka_dlq_topic
-from aigateway.telemetry import get_logger
+from aigateway.telemetry import correlation_id_var, get_logger
 
 logger = get_logger(__name__)
 
@@ -41,6 +41,13 @@ async def ensure_topics(bootstrap_servers: str, timeout_seconds: float) -> None:
             return
     finally:
         await admin.close()
+
+
+def correlation_headers() -> list[tuple[str, bytes]] | None:
+    cid = correlation_id_var.get()
+    if not cid:
+        return None
+    return [("X-Correlation-ID", cid.encode("utf-8"))]
 
 
 class KafkaEventPublisher:
@@ -79,7 +86,11 @@ class KafkaEventPublisher:
         try:
             payload = event.model_dump_json().encode("utf-8")
             await asyncio.wait_for(
-                self._producer.send_and_wait(event.topic, payload),
+                self._producer.send_and_wait(
+                    event.topic,
+                    payload,
+                    headers=correlation_headers(),
+                ),
                 timeout=timeout,
             )
         except Exception:

@@ -53,10 +53,14 @@ class HttpAuthClient:
         return AuthContext.model_validate(response.json())
 
     async def write_audit(self, payload: dict) -> None:
+        headers = {"X-Internal-Token": self._settings.internal_auth_token}
+        cid = correlation_id_var.get()
+        if cid:
+            headers["X-Correlation-ID"] = cid
         try:
             await self._client.post(
                 f"{self._settings.auth_base_url.rstrip('/')}/internal/v1/audit",
-                headers={"X-Internal-Token": self._settings.internal_auth_token},
+                headers=headers,
                 json=payload,
                 timeout=self._settings.auth_timeout,
             )

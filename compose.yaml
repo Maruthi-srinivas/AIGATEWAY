@@ -96,9 +96,11 @@ services:
     environment:
       <<: *auth-env
       SERVICE_NAME: auth
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HOST: 0.0.0.0
       PORT: "8000"
       SEED_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,6 +144,7 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_PUBLISH_TIMEOUT_SECONDS: ${KAFKA_PUBLISH_TIMEOUT_SECONDS:-0.5}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     depends_on:
       postgres:
@@ -177,6 +180,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
     depends_on:
       redis:
         condition: service_healthy
@@ -212,6 +216,7 @@ services:
       RAG_CONTEXT_MAX_CHARS: ${RAG_CONTEXT_MAX_CHARS:-8000}
       RAG_TIMEOUT_SECONDS: ${RAG_TIMEOUT_SECONDS:-2}
       SEED_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
     depends_on:
       postgres:
         condition: service_healthy
@@ -238,6 +243,7 @@ services:
       POSTGRES_DSN: ${POSTGRES_DSN:-postgresql://aigateway:aigateway@postgres:5432/aigateway}
       INTERNAL_AUTH_TOKEN: ${INTERNAL_AUTH_TOKEN:-dev-internal-token-change-me}
       GUARDRAILS_MODE: ${GUARDRAILS_MODE:-fixture}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
       GUARDRAILS_API_URL: ${GUARDRAILS_API_URL:-https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze}
       GUARDRAILS_API_KEY: ${GUARDRAILS_API_KEY:-}
       GUARDRAILS_MODERATION_THRESHOLD: ${GUARDRAILS_MODERATION_THRESHOLD:-0.7}
@@ -282,6 +288,54 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infrastructure/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
   test:
     profiles: [test]
     build:
@@ -293,6 +347,7 @@ services:
       RAG_URL: http://rag:8000
       GUARDRAILS_URL: http://guardrails:8000
       EVALS_URL: http://evals:8000
+      GRAFANA_URL: http://grafana:3000
       AUTH_URL: http://auth:8000
       POSTGRES_DSN: postgresql://aigateway:aigateway@postgres:5432/aigateway
       REDIS_URL: redis://redis:6379/0
@@ -316,6 +371,8 @@ services:
         condition: service_healthy
       evals:
         condition: service_healthy
+      grafana:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -324,3 +381,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  tempo_data:

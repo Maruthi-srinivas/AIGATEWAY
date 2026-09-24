@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -7,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from aigateway.gateway.errors import json_error
-from aigateway.telemetry import correlation_id_var
+from aigateway.telemetry import correlation_id_var, observe_http
 
 CORRELATION_HEADER = "X-Correlation-ID"
 
@@ -38,3 +39,20 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
             if len(body) > max_bytes:
                 return json_error(400, "payload_too_large", "payload too large")
         return await call_next(request)
+
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        started = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route_obj = request.scope.get("route")
+            route = getattr(route_obj, "path", None) or "unmatched"
+            outcome = getattr(request.state, "metrics_outcome", None)
+            if outcome is None:
+                outcome = "allowed" if status < 400 else "error"
+            observe_http(route, request.method, status, outcome, time.perf_counter() - started)

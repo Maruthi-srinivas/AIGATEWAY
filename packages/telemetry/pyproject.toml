@@ -1,9 +1,13 @@
 [project]
 name = "aigateway-telemetry"
 version = "0.1.0"
-description = "Structured JSON logging and correlation IDs"
+description = "Structured JSON logging, traces, and Prometheus metrics"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+    "prometheus-client>=0.21",
+]
 
 [build-system]
 requires = ["hatchling"]

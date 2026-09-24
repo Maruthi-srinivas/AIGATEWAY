@@ -19,6 +19,7 @@ from aigateway.gateway.app import create_app
 from aigateway.gateway.grounding import I_DONT_KNOW
 from aigateway.gateway.rate_limit import DeniedRateLimiter, UnavailableRateLimiter
 from aigateway.gateway.repository import MemoryChatRepository
+from aigateway.telemetry import sample_value, set_span_hook
 from aigateway.testing import FakeGuardrail, FakeLLMClient, FakeRetriever
 from tests.helpers import (
     DEFAULT_TENANT_ID,
@@ -914,3 +915,30 @@ def test_publisher_failure_keeps_the_chat_status() -> None:
         response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
     assert response.status_code == 200
     assert publisher.events
+
+
+def test_chat_records_one_latency_observation() -> None:
+    before = sample_value("aigateway_http_request_duration_seconds", route="/v1/chat")
+    app = _app()
+    with TestClient(app) as client:
+        response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
+        metrics = client.get("/v1/metrics")
+    assert response.status_code == 200
+    after = sample_value("aigateway_http_request_duration_seconds", route="/v1/chat")
+    assert after == before + 1
+    assert "hello" not in metrics.text
+    assert 'le="2.0"' in metrics.text
+
+
+def test_raising_exporter_keeps_the_chat_status() -> None:
+    def boom(name: str) -> None:
+        raise RuntimeError(name)
+
+    set_span_hook(boom)
+    try:
+        app = _app()
+        with TestClient(app) as client:
+            response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
+        assert response.status_code == 200
+    finally:
+        set_span_hook(None)

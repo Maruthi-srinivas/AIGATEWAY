@@ -12,7 +12,7 @@ from aigateway.contracts import (
     RagUnavailableError,
     RetrieveResult,
 )
-from aigateway.telemetry import correlation_id_var, get_logger
+from aigateway.telemetry import correlation_id_var, get_logger, observe_rag
 
 logger = get_logger(__name__)
 
@@ -56,11 +56,15 @@ class HttpRagClient:
             )
         except httpx.HTTPError as exc:
             logger.warning("rag retrieve failed")
+            observe_rag("error")
             raise RagUnavailableError() from exc
         if response.status_code >= 500 or response.status_code == 401:
+            observe_rag("error")
             raise RagUnavailableError()
         response.raise_for_status()
-        return RetrieveResult.model_validate(response.json())
+        result = RetrieveResult.model_validate(response.json())
+        observe_rag("hit" if result.chunks else "miss")
+        return result
 
     async def ingest(self, tenant_id: str, body: DocumentIngest, created_by: str) -> DocumentOut:
         return await self._json(

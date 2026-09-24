@@ -9,7 +9,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from aigateway.config import WorkerSettings
 from aigateway.contracts import KAFKA_TOPICS, ChatEvent, kafka_dlq_topic
-from aigateway.telemetry import get_logger
+from aigateway.telemetry import correlation_id_var, get_logger, span
 
 logger = get_logger(__name__)
 
@@ -72,8 +72,15 @@ class AnalyticsConsumer:
         await self._producer.start()
         await self._consumer.start()
         async for message in self._consumer:
-            await self._handle(message.topic, message.value or b"")
-            await self._consumer.commit()
+            cid = correlation_from_headers(message.headers)
+            token = correlation_id_var.set(cid) if cid else None
+            try:
+                with span("worker.consume"):
+                    await self._handle(message.topic, message.value or b"")
+                await self._consumer.commit()
+            finally:
+                if token is not None:
+                    correlation_id_var.reset(token)
 
     async def _handle(self, topic: str, raw: bytes) -> None:
         event: ChatEvent | None = None
@@ -126,6 +133,16 @@ class AnalyticsConsumer:
         if self._producer is None:
             return
         await self._producer.send_and_wait(kafka_dlq_topic(topic), raw)
+
+
+def correlation_from_headers(headers) -> str | None:
+    if not headers:
+        return None
+    for key, value in headers:
+        if key == "X-Correlation-ID" and value:
+            text = value.decode("utf-8", errors="replace")[:128]
+            return text or None
+    return None
 
 
 def authorized(header: str, token: str) -> bool:

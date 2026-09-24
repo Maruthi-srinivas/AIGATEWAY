@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: gateway
+    metrics_path: /v1/metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+  - job_name: auth
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["auth:8000"]
+  - job_name: guardrails
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["guardrails:8000"]
+  - job_name: rag
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["rag:8000"]
+  - job_name: worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:8000"]

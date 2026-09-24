@@ -1,6 +1,15 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 8 publishes metadata-only chat events to a single-node Kafka broker. Citation checks from Version 7 still drop unsupported sentences and redact secret spans. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+Docker-first middleware between applications and LLM providers. Version 9 adds Prometheus, Grafana, and Tempo beside the chat path. Citation checks and metadata-only Kafka events stay in place. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+
+## What Version 9 does
+
+- Prometheus scrapes the gateway, auth, guardrails, RAG, and the worker. `GET /v1/metrics` on the gateway is unauthenticated Prometheus text. Labels are route, method, status, and outcome. No user id, tenant id, prompt, or answer.
+- Grafana is on [http://localhost:3000](http://localhost:3000) as an anonymous Viewer. Three dashboards are provisioned: latency with a 2 second line, safety blocks, and RAG misses.
+- Traces go to Tempo over OTLP. Export is best-effort. Chat and `/v1/ready` do not call Prometheus, Tempo, or Grafana.
+- Kafka events keep `correlation_id` in the JSON body and also set the `X-Correlation-ID` header.
+- `GET /v1/audit?correlation_id=` returns that tenant's matching rows. Another tenant's id returns an empty list.
+- Gateway OpenAPI is **0.8.0**.
 
 ## What Version 8 does
 
@@ -46,7 +55,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-You should see `gateway`, `web`, `auth`, `migrate` (exited 0), `worker`, `kafka`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
+You should see `gateway`, `web`, `auth`, `migrate` (exited 0), `worker`, `kafka`, `prometheus`, `grafana`, `tempo`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
 
 ### Console
 

@@ -35,14 +35,18 @@ from aigateway.gateway.errors import register_exception_handlers
 from aigateway.gateway.events import KafkaEventPublisher, NullEventPublisher
 from aigateway.gateway.guardrail_client import HttpGuardrailClient
 from aigateway.gateway.llm import build_llm_client
-from aigateway.gateway.middleware import BodySizeLimitMiddleware, CorrelationIdMiddleware
+from aigateway.gateway.middleware import (
+    BodySizeLimitMiddleware,
+    CorrelationIdMiddleware,
+    MetricsMiddleware,
+)
 from aigateway.gateway.policy import handle_get_policy, handle_patch_policy
 from aigateway.gateway.rag_client import HttpRagClient
 from aigateway.gateway.rate_limit import RedisTokenBucket
 from aigateway.gateway.readiness import ReadinessChecker
 from aigateway.gateway.repository import SqlChatRepository
 from aigateway.gateway.session_cache import SessionCache
-from aigateway.telemetry import get_logger
+from aigateway.telemetry import get_logger, render_metrics, setup_telemetry, trace_request
 
 logger = get_logger(__name__)
 
@@ -108,12 +112,15 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.7.0",
+        version="0.8.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
     app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
+    app.middleware("http")(trace_request)
+    setup_telemetry(settings.service_name)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list(),
@@ -158,6 +165,11 @@ def create_app(
     @app.get("/v1/health", tags=["ops"])
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/metrics", tags=["ops"])
+    async def metrics() -> Response:
+        body, content_type = render_metrics()
+        return Response(content=body, media_type=content_type)
 
     @app.get("/v1/ready", tags=["ops"])
     async def ready() -> JSONResponse:

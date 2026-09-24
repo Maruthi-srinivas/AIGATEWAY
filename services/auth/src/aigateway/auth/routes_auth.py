@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aigateway.auth.audit import write_audit
+from aigateway.auth.audit import select_audit, write_audit
 from aigateway.auth.db import get_session
 from aigateway.auth.deps import get_auth_context, get_settings, tenant_scope
 from aigateway.auth.models import ApiKey, RefreshToken, User
@@ -248,11 +248,10 @@ async def create_my_api_key(
 async def list_audit(
     request: Request,
     tenant_id: str | None = None,
+    correlation_id: str | None = None,
     ctx: AuthContext = Depends(get_auth_context),
     session: AsyncSession = Depends(get_session),
 ) -> list[AuditOut]:
-    from aigateway.auth.models import AuditLog
-
     try:
         scoped = tenant_scope(ctx, tenant_id)
     except AuthorizationError:
@@ -268,10 +267,5 @@ async def list_audit(
         )
         await session.commit()
         raise
-    result = await session.execute(
-        select(AuditLog)
-        .where(AuditLog.tenant_id == uuid.UUID(scoped))
-        .order_by(AuditLog.created_at.desc())
-        .limit(200)
-    )
+    result = await session.execute(select_audit(scoped, correlation_id))
     return [AuditOut.model_validate(row) for row in result.scalars()]

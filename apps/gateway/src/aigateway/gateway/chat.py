@@ -48,7 +48,7 @@ from aigateway.gateway.repository import (
     is_owner,
 )
 from aigateway.gateway.sse import sse_event, with_heartbeat
-from aigateway.telemetry import correlation_id_var, get_logger
+from aigateway.telemetry import correlation_id_var, get_logger, span
 
 logger = get_logger(__name__)
 
@@ -244,7 +244,8 @@ async def resolve_write_conversation(
 
 
 async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | StreamingResponse:
-    ctx = await require_auth(request)
+    with span("auth"):
+        ctx = await require_auth(request)
     request.state.chat_started = time.perf_counter()
     await _publish_event(
         request,
@@ -280,6 +281,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
 
     conversation: ConversationRecord | None = None
     history_rows: list[MessageRecord] = []
+    cached = None
     if body.conversation_id:
         try:
             conversation = await resolve_write_conversation(
@@ -307,18 +309,25 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
                 metadata={"conversation_id": body.conversation_id},
             )
             raise
-        history_rows = await request.app.state.chat_repo.list_messages(
-            conversation.id,
-            limit=request.app.state.settings.session_cache_message_limit,
-        )
+        history_rows = []
+        cached = await request.app.state.session_cache.get(tenant_id, str(conversation.id))
+        if not cached:
+            history_rows = await request.app.state.chat_repo.list_messages(
+                conversation.id,
+                limit=request.app.state.settings.session_cache_message_limit,
+            )
 
-    texts = [GuardrailText(role=row.role, content=row.content) for row in history_rows]
+    if cached:
+        texts = [GuardrailText(role=item["role"], content=item["content"]) for item in cached]
+    else:
+        texts = [GuardrailText(role=row.role, content=row.content) for row in history_rows]
     texts.append(GuardrailText(role="user", content=body.message))
     try:
-        check = await request.app.state.guardrail_client.check_input(
-            tenant_id=tenant_id,
-            texts=texts,
-        )
+        with span("guardrails"):
+            check = await request.app.state.guardrail_client.check_input(
+                tenant_id=tenant_id,
+                texts=texts,
+            )
     except GuardrailsUnavailableError as exc:
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc
@@ -349,6 +358,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
             "groundedness": None,
         }
         await _emit_chat_result(request, ctx, status_code=400)
+        request.state.metrics_outcome = "blocked"
         raise InputBlockedError(decisions=check.decisions)
 
     masked_user = check.texts[-1].content if check.texts else body.message
@@ -379,12 +389,13 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         secret_redacted = raw_answer != generated
     else:
         try:
-            retrieved = await request.app.state.rag_client.retrieve(
-                tenant_id=tenant_id,
-                query=masked_user,
-                role=ctx.role,
-                debug=body.debug,
-            )
+            with span("retrieve"):
+                retrieved = await request.app.state.rag_client.retrieve(
+                    tenant_id=tenant_id,
+                    query=masked_user,
+                    role=ctx.role,
+                    debug=body.debug,
+                )
         except RagUnavailableError as exc:
             await audit_chat(request, ctx, status_code=503, success=False)
             raise exc
@@ -394,18 +405,20 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         else:
             llm_messages, _ = grounded_messages(history, retrieved.chunks)
             generated = await _generate(request, ctx, llm_messages)
-            (
-                raw_answer,
-                citations,
-                groundedness,
-                unsupported_count,
-                secret_redacted,
-            ) = verify_answer(generated, retrieved.chunks)
+            with span("citation"):
+                (
+                    raw_answer,
+                    citations,
+                    groundedness,
+                    unsupported_count,
+                    secret_redacted,
+                ) = verify_answer(generated, retrieved.chunks)
     try:
-        outbound = await request.app.state.guardrail_client.check_output(
-            tenant_id=tenant_id,
-            texts=[GuardrailText(role="assistant", content=raw_answer)],
-        )
+        with span("guardrails"):
+            outbound = await request.app.state.guardrail_client.check_output(
+                tenant_id=tenant_id,
+                texts=[GuardrailText(role="assistant", content=raw_answer)],
+            )
     except GuardrailsUnavailableError as exc:
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc
@@ -418,6 +431,11 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     )
     if outbound.decision == "block":
         citations = []
+        request.state.metrics_outcome = "blocked"
+    elif secret_redacted or unsupported_count:
+        request.state.metrics_outcome = "redacted"
+    else:
+        request.state.metrics_outcome = "allowed"
     assistant = await request.app.state.chat_repo.add_message(
         conversation_id=conversation.id,
         tenant_id=uuid.UUID(tenant_id),
@@ -477,7 +495,8 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
 
 async def _generate(request: Request, ctx: AuthContext, messages: list[dict[str, str]]) -> str:
     try:
-        return await request.app.state.llm_client.generate(messages)
+        with span("generate"):
+            return await request.app.state.llm_client.generate(messages)
     except LlmUnavailableError as exc:
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc

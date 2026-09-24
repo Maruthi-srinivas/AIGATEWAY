@@ -1,6 +1,6 @@
 # Architecture (implemented through Version 8)
 
-Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.7.0**.
+Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.8.0**.
 
 This is what is running now. Grafana, Kubernetes, Prometheus, and golden-set faithfulness evals are later versions. `services/evals` is a health stub and is not on the request path.
 
