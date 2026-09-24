@@ -14,6 +14,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 - The gateway **orchestrates** and is the only public port. Identity lives in `services/auth`. Input checks live in `services/guardrails`. Documents, chunks, embeddings, and vector search live in `services/rag`. RAG does not generate.
 - Gateway must not hold `JWT_SECRET`, `GUARDRAILS_API_KEY`, `JEV_API_KEY`, `EMBEDDING_API_KEY`, or user tables. The LLM key may live on the gateway. Introspect, guardrail, and RAG checks use `INTERNAL_AUTH_TOKEN`.
 - `packages/*` must not import `apps/*` or `services/*`.
+- `apps/web` is a static client of the public gateway. It must not call internal routes or hold service secrets. Its image is `infrastructure/docker/Dockerfile.web`, not `Dockerfile.app`.
 - **Fail closed** on missing credentials, invalid tokens, and cross-tenant access (401/403).
 - Chat rate limiter **fails closed** if Redis is down (503 `rate_limiter_unavailable`).
 - Input guardrails **fail closed** if the service is down or slower than 2s (503 `guardrails_unavailable`).
@@ -26,7 +27,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## Docker
 
 - Do not document or require host installs of Python, uv, Postgres, Redis, or Kafka.
-- App images use `infrastructure/docker/Dockerfile.app` with `PACKAGE` / `MODULE` / `HEALTH_PATH` args.
+- App images use `infrastructure/docker/Dockerfile.app` with `PACKAGE` / `MODULE` / `HEALTH_PATH` args. The console image is the exception: `infrastructure/docker/Dockerfile.web`.
 - After code changes, rebuild: `docker compose up --build -d`.
 - Schema: Alembic in `services/auth` (identity), `apps/gateway` (conversations), `services/guardrails` (policies), and `services/rag` (documents/chunks). The `migrate` container runs auth, then gateway, then guardrails, then rag `upgrade head`.
 - Postgres image is `pgvector/pgvector:pg16`. Existing `postgres:16` volumes lack the extension binary; run `docker compose down -v` once after that switch.

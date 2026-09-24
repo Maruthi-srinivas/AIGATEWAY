@@ -46,7 +46,11 @@ docker compose up --build -d
 docker compose ps
 ```
 
-You should see `gateway`, `auth`, `migrate` (exited 0), `worker`, `kafka`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
+You should see `gateway`, `web`, `auth`, `migrate` (exited 0), `worker`, `kafka`, `rag`, `guardrails`, `evals`, `postgres`, and `redis`.
+
+### Console
+
+Open [http://localhost:5173](http://localhost:5173). That container serves a static explainer and playground. The browser calls the public gateway at `http://localhost:8000` only. The console is not on the request path, does not receive internal tokens, and does not show worker counts.
 
 ### Demo credentials (local Docker only)
 
@@ -261,5 +265,6 @@ Do not put production secrets in git. Never log passwords, refresh tokens, full 
 
 - [AGENTS.md](AGENTS.md)
 - [PROJECT_STRUCTURE_AND_IMPROVEMENTS.md](PROJECT_STRUCTURE_AND_IMPROVEMENTS.md)
+- [docs/diagrams/architecture.md](docs/diagrams/architecture.md)
 - [docs/diagrams/request-path.md](docs/diagrams/request-path.md)
 - [docs/adr](docs/adr)

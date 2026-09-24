@@ -38,6 +38,7 @@ def gateway_settings() -> GatewaySettings:
         rag_base_url="http://rag.example",
         internal_auth_token="test-internal",
         stub_stream_delay_ms=0,
+        cors_origins="http://localhost:5173",
     )
 
 

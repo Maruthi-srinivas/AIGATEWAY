@@ -12,6 +12,7 @@ def test_service_settings_defaults() -> None:
 
 
 def test_gateway_settings_require_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
     monkeypatch.delenv("POSTGRES_DSN", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("AUTH_BASE_URL", raising=False)
@@ -22,8 +23,33 @@ def test_gateway_settings_require_urls(monkeypatch: pytest.MonkeyPatch) -> None:
         GatewaySettings(_env_file=None)
 
 
+def test_gateway_cors_origins_default_and_reject_wildcard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    monkeypatch.delenv("SERVICE_NAME", raising=False)
+    settings = GatewaySettings(
+        postgres_dsn="postgresql://example",
+        redis_url="redis://example",
+        auth_base_url="http://auth:8000",
+        guardrails_base_url="http://guardrails:8000",
+        rag_base_url="http://rag:8000",
+        internal_auth_token="secret",
+    )
+    assert settings.cors_origin_list() == ["http://localhost:5173"]
+    with pytest.raises(ValidationError):
+        GatewaySettings(
+            postgres_dsn="postgresql://example",
+            redis_url="redis://example",
+            auth_base_url="http://auth:8000",
+            guardrails_base_url="http://guardrails:8000",
+            rag_base_url="http://rag:8000",
+            internal_auth_token="secret",
+            cors_origins="*",
+        )
+
+
 def test_gateway_settings_from_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SERVICE_NAME", raising=False)
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
     settings = GatewaySettings(
         postgres_dsn="postgresql://example",
         redis_url="redis://example",

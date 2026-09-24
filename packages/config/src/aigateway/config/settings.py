@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,20 @@ class GatewaySettings(ServiceSettings):
     llm_timeout_seconds: float = Field(default=30.0, ge=0.1)
     kafka_bootstrap_servers: str = ""
     kafka_publish_timeout_seconds: float = Field(default=0.5, ge=0.1)
+    cors_origins: str = "http://localhost:5173"
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _explicit_cors_origins(cls, value: str) -> str:
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        if "*" in parts:
+            raise ValueError("CORS_ORIGINS must list explicit origins")
+        return ",".join(parts)
+
+    def cors_origin_list(self) -> list[str]:
+        if not self.cors_origins:
+            return []
+        return [part.strip() for part in self.cors_origins.split(",") if part.strip()]
 
 
 class AuthSettings(ServiceSettings):
