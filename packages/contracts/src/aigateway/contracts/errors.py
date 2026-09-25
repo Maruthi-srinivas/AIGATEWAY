@@ -1,3 +1,11 @@
+class ApprovalNotFoundError(Exception):
+    def __init__(self, detail: str = "approval not found") -> None:
+        self.detail = detail
+        self.code = "approval_not_found"
+        self.status_code = 404
+        super().__init__(detail)
+
+
 class AuthenticationError(Exception):
     """Raised when credentials are missing or invalid (HTTP 401)."""
 
@@ -118,6 +126,14 @@ class LlmUnavailableError(Exception):
     def __init__(self, detail: str = "llm unavailable") -> None:
         self.detail = detail
         self.code = "llm_unavailable"
+        self.status_code = 503
+        super().__init__(detail)
+
+
+class GovernanceUnavailableError(Exception):
+    def __init__(self, detail: str = "governance unavailable") -> None:
+        self.detail = detail
+        self.code = "governance_unavailable"
         self.status_code = 503
         super().__init__(detail)
 

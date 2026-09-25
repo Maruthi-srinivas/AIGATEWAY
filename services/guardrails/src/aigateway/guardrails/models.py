@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -31,4 +31,15 @@ class TenantPolicy(Base):
     jev_risk_threshold: Mapped[float] = mapped_column(Float, default=0.7)
     jev_output_toxicity_threshold: Mapped[float] = mapped_column(Float, default=0.7)
     jev_output_pii_threshold: Mapped[float] = mapped_column(Float, default=0.7)
+    strictness: Mapped[str] = mapped_column(String(16), default="standard")
+    route_preference: Mapped[str] = mapped_column(String(16), default="cheap")
+    model_allowlist: Mapped[list] = mapped_column(
+        JSON,
+        default=lambda: ["fixture-cheap", "fixture-capable"],
+    )
+    tool_allowlist: Mapped[list] = mapped_column(
+        JSON,
+        default=lambda: ["lookup_leave", "export_directory"],
+    )
+    retention_days: Mapped[int] = mapped_column(Integer, default=30)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

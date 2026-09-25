@@ -7,6 +7,7 @@ import httpx
 
 from aigateway.config import GatewaySettings
 from aigateway.contracts import LlmUnavailableError
+from aigateway.gateway.routing import CAPABLE_MODEL, CHEAP_MODEL, route_var
 from aigateway.telemetry import get_logger
 
 logger = get_logger(__name__)
@@ -44,8 +45,19 @@ class FixtureLLMClient:
 
 
 class OpenAICompatLLMClient:
-    def __init__(self, settings: GatewaySettings, client: httpx.AsyncClient) -> None:
-        self._settings = settings
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: float,
+        client: httpx.AsyncClient,
+    ) -> None:
+        self._base_url = base_url
+        self._api_key = api_key
+        self._model = model
+        self._timeout = timeout
         self._client = client
 
     async def generate(
@@ -55,19 +67,19 @@ class OpenAICompatLLMClient:
         stream: bool = False,
     ) -> str:
         _ = stream
-        if not self._settings.openai_api_key or not self._settings.llm_model:
+        if not self._api_key or not self._model:
             raise LlmUnavailableError("llm key missing")
-        url = f"{self._settings.openai_base_url.rstrip('/')}/chat/completions"
+        url = f"{self._base_url.rstrip('/')}/chat/completions"
         try:
             response = await self._client.post(
                 url,
-                headers={"Authorization": f"Bearer {self._settings.openai_api_key}"},
+                headers={"Authorization": f"Bearer {self._api_key}"},
                 json={
-                    "model": self._settings.llm_model,
+                    "model": self._model,
                     "messages": messages,
                     "stream": False,
                 },
-                timeout=self._settings.llm_timeout_seconds,
+                timeout=self._timeout,
             )
             response.raise_for_status()
             body = response.json()
@@ -98,9 +110,52 @@ def _context_sentences(content: str) -> list[str]:
     return sentences
 
 
+class RoutingLLMClient:
+    """Calls only the provider selected for this request. No failover."""
+
+    def __init__(self, clients: dict[str, FixtureLLMClient | OpenAICompatLLMClient]) -> None:
+        self._clients = clients
+
+    def _client(self) -> FixtureLLMClient | OpenAICompatLLMClient:
+        route = route_var.get()
+        model = route.model if route is not None else CHEAP_MODEL
+        client = self._clients.get(model)
+        if client is None:
+            raise LlmUnavailableError()
+        return client
+
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        stream: bool = False,
+    ) -> str:
+        return await self._client().generate(messages, stream=stream)
+
+    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+        async for chunk in self._client().stream(messages):
+            yield chunk
+
+
 def build_llm_client(settings: GatewaySettings, http_client: httpx.AsyncClient | None = None):
     if settings.llm_mode == "live":
         if http_client is None:
             raise LlmUnavailableError("llm client missing")
-        return OpenAICompatLLMClient(settings, http_client)
-    return FixtureLLMClient(settings.stub_stream_delay_ms)
+        cheap = OpenAICompatLLMClient(
+            base_url=settings.openai_base_url,
+            api_key=settings.openai_api_key,
+            model=settings.llm_model,
+            timeout=settings.llm_timeout_seconds,
+            client=http_client,
+        )
+        capable = OpenAICompatLLMClient(
+            base_url=settings.provider_b_base_url,
+            api_key=settings.provider_b_api_key,
+            model=settings.provider_b_model,
+            timeout=settings.llm_timeout_seconds,
+            client=http_client,
+        )
+    else:
+        cheap = FixtureLLMClient(settings.stub_stream_delay_ms)
+        capable = FixtureLLMClient(settings.stub_stream_delay_ms)
+    return RoutingLLMClient({CHEAP_MODEL: cheap, CAPABLE_MODEL: capable})

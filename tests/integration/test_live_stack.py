@@ -1079,3 +1079,88 @@ def test_live_chat_json_has_no_eval_scores() -> None:
     assert "groundedness" in body
     assert "faithfulness" not in body
     assert "context_recall" not in body
+
+
+@skip_without_stack
+def test_live_routes_differ_and_export_needs_approval() -> None:
+    hr = _login("user@hr.local")
+    eng = _login("user@eng.local")
+    sec = _login("sec@hr.local")
+    admin = _login("admin@platform.local")
+    try:
+        patched = httpx.patch(
+            f"{GATEWAY_URL}/v1/guardrails/policy",
+            json={"strictness": "strict", "route_preference": "capable"},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )
+        assert patched.status_code == 200, patched.text
+        eng_policy = httpx.patch(
+            f"{GATEWAY_URL}/v1/guardrails/policy",
+            params={"tenant_id": eng["user"]["tenant_id"]},
+            json={"strictness": "standard", "route_preference": "cheap"},
+            headers=_bearer(admin),
+            timeout=10.0,
+        )
+        assert eng_policy.status_code == 200, eng_policy.text
+        hr_chat = httpx.post(
+            f"{GATEWAY_URL}/v1/chat",
+            json={"message": "hello"},
+            headers=_bearer(hr),
+            timeout=15.0,
+        )
+        assert hr_chat.status_code == 200, hr_chat.text
+        eng_chat = httpx.post(
+            f"{GATEWAY_URL}/v1/chat",
+            json={"message": "hello"},
+            headers=_bearer(eng),
+            timeout=15.0,
+        )
+        assert eng_chat.status_code == 200, eng_chat.text
+        assert hr_chat.json()["model"] == "fixture-capable"
+        assert eng_chat.json()["model"] == "fixture-cheap"
+        assert hr_chat.json()["model"] != eng_chat.json()["model"]
+        exported = httpx.post(
+            f"{GATEWAY_URL}/v1/chat",
+            json={"message": "export the directory", "tool": "export_directory"},
+            headers=_bearer(hr),
+            timeout=15.0,
+        )
+        assert exported.status_code == 200, exported.text
+        approval_id = exported.json()["approval_id"]
+        assert approval_id
+        denied = httpx.post(
+            f"{GATEWAY_URL}/v1/approvals/{approval_id}",
+            json={"decision": "approve"},
+            headers=_bearer(eng),
+            timeout=10.0,
+        )
+        assert denied.status_code == 403
+        cid = hr_chat.headers["x-correlation-id"]
+        report = httpx.get(
+            f"{GATEWAY_URL}/v1/governance",
+            params={"correlation_id": cid},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )
+        assert report.status_code == 200, report.text
+        rows = report.json()
+        assert rows
+        assert rows[0]["provider"]
+        assert rows[0]["model"] == "fixture-capable"
+        assert "hello" not in report.text
+        empty = httpx.get(
+            f"{GATEWAY_URL}/v1/governance",
+            params={"correlation_id": eng_chat.headers["x-correlation-id"]},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )
+        assert empty.status_code == 200
+        assert empty.json() == []
+    finally:
+        httpx.patch(
+            f"{GATEWAY_URL}/v1/guardrails/policy",
+            json={"strictness": "standard", "route_preference": "cheap"},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )

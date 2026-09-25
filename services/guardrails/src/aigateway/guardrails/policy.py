@@ -41,6 +41,11 @@ def _to_policy(row: TenantPolicy) -> GuardrailPolicy:
         jev_risk_threshold=row.jev_risk_threshold,
         jev_output_toxicity_threshold=row.jev_output_toxicity_threshold,
         jev_output_pii_threshold=row.jev_output_pii_threshold,
+        strictness=row.strictness,  # type: ignore[arg-type]
+        route_preference=row.route_preference,  # type: ignore[arg-type]
+        model_allowlist=list(row.model_allowlist or []),
+        tool_allowlist=list(row.tool_allowlist or []),
+        retention_days=row.retention_days,
     )
 
 
@@ -77,6 +82,11 @@ async def patch_policy(
             jev_risk_threshold=current.jev_risk_threshold,
             jev_output_toxicity_threshold=current.jev_output_toxicity_threshold,
             jev_output_pii_threshold=current.jev_output_pii_threshold,
+            strictness=current.strictness,
+            route_preference=current.route_preference,
+            model_allowlist=list(current.model_allowlist),
+            tool_allowlist=list(current.tool_allowlist),
+            retention_days=current.retention_days,
         )
         session.add(row)
     data = update.model_dump(exclude_unset=True)

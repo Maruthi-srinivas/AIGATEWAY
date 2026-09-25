@@ -51,7 +51,9 @@ from aigateway.gateway.repository import (
     can_read,
     is_owner,
 )
+from aigateway.gateway.routing import route_var, select_route
 from aigateway.gateway.sse import sse_event, with_heartbeat
+from aigateway.gateway.tools import APPROVAL_PENDING, LEAVE_TEXT
 from aigateway.telemetry import correlation_id_var, get_logger, span
 
 logger = get_logger(__name__)
@@ -158,6 +160,9 @@ def _chat_event(
         context_precision=metrics.get("context_precision"),
         answer_correctness=metrics.get("answer_correctness"),
         eval_status=metrics.get("eval_status"),
+        provider=metrics.get("provider"),
+        model=metrics.get("model"),
+        estimated_cost=metrics.get("estimated_cost"),
     )
 
 
@@ -542,6 +547,16 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         request.state.metrics_outcome = "blocked"
         raise InputBlockedError(decisions=check.decisions)
 
+    try:
+        route = select_route(list(check.model_allowlist), check.route_preference)
+    except AuthorizationError:
+        await audit_chat(request, ctx, status_code=403, success=False)
+        raise
+    if body.tool and body.tool not in check.tool_allowlist:
+        await audit_chat(request, ctx, status_code=403, success=False)
+        raise AuthorizationError("tool not allowed")
+    request.state.route = route
+
     masked_user = check.texts[-1].content if check.texts else body.message
     if conversation is None:
         conversation = await request.app.state.chat_repo.create_conversation(
@@ -566,7 +581,19 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     llm_messages = history
     eval_chunks: list = []
     retried = False
-    if is_chitchat(masked_user):
+    approval_id = None
+    if body.tool == "export_directory":
+        pending = await request.app.state.governance.create_approval(
+            tenant_id=tenant_id,
+            requester_user_id=ctx.user_id,
+            correlation_id=cid,
+            tool=body.tool,
+        )
+        approval_id = pending.id
+        raw_answer = APPROVAL_PENDING
+    elif body.tool == "lookup_leave":
+        raw_answer = LEAVE_TEXT
+    elif is_chitchat(masked_user):
         generated = await _generate(request, ctx, llm_messages)
         raw_answer = mask_secrets(generated)
         secret_redacted = raw_answer != generated
@@ -628,6 +655,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     if (
         not body.debug
         and not body.stream
+        and body.tool is None
         and not is_chitchat(masked_user)
         and outbound.decision != "block"
         and groundedness is not None
@@ -655,10 +683,14 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         str(conversation.id),
         [*history, {"role": "assistant", "content": answer}],
     )
+    cost = 0.0 if body.tool else route.estimated_cost
     request.state.chat_metrics = {
         "rule_ids": _security_rule_ids(decisions, secret_redacted),
         "citation_count": len(citations),
         "groundedness": groundedness,
+        "provider": route.provider,
+        "model": route.model,
+        "estimated_cost": cost,
     }
     await audit_chat(
         request,
@@ -681,8 +713,17 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         chunks=eval_chunks,
         groundedness=groundedness,
         citation_count=len(citations),
-        chitchat=is_chitchat(masked_user),
+        chitchat=is_chitchat(masked_user) or body.tool is not None,
         had_chunks=bool(eval_chunks),
+    )
+    await _record_governance(
+        request,
+        tenant_id=tenant_id,
+        provider=route.provider,
+        model=route.model,
+        route=route.preference,
+        estimated_cost=cost,
+        approval_status="pending" if approval_id else None,
     )
     payload = ChatResponse(
         answer=answer,
@@ -695,6 +736,9 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
         guardrail_decisions=decisions,
         assessments=assessments,
         retrieval_debug=retrieval_debug,
+        provider=route.provider,
+        model=route.model,
+        approval_id=approval_id,
     )
     if body.stream:
         return StreamingResponse(
@@ -712,13 +756,43 @@ async def handle_chat(request: Request, body: ChatRequest) -> JSONResponse | Str
     return JSONResponse(payload.model_dump(), headers=limit.headers())
 
 
+async def _record_governance(
+    request: Request,
+    *,
+    tenant_id: str,
+    provider: str,
+    model: str,
+    route: str,
+    estimated_cost: float,
+    approval_status: str | None,
+) -> None:
+    store = getattr(request.app.state, "governance", None)
+    if store is None:
+        return
+    try:
+        await store.record(
+            tenant_id=tenant_id,
+            correlation_id=correlation_id_var.get(),
+            provider=provider,
+            model=model,
+            route=route,
+            estimated_cost=estimated_cost,
+            approval_status=approval_status,
+        )
+    except Exception:
+        logger.warning("governance store failed")
+
+
 async def _generate(request: Request, ctx: AuthContext, messages: list[dict[str, str]]) -> str:
+    token = route_var.set(getattr(request.state, "route", None))
     try:
         with span("generate"):
             return await request.app.state.llm_client.generate(messages)
     except LlmUnavailableError as exc:
         await audit_chat(request, ctx, status_code=503, success=False)
         raise exc
+    finally:
+        route_var.reset(token)
 
 
 async def _stream_answer(

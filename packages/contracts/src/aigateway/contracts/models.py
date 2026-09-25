@@ -40,6 +40,7 @@ class ChatRequest(BaseModel):
     stream: bool = False
     tenant_id: str | None = None
     debug: bool = False
+    tool: Literal["lookup_leave", "export_directory"] | None = None
 
     @field_validator("conversation_id", "tenant_id")
     @classmethod
@@ -83,6 +84,9 @@ class GuardrailCheckResult(BaseModel):
     texts: list[GuardrailText] = Field(default_factory=list)
     assessments: list[JevAssessment] = Field(default_factory=list)
     policy_hash: str = ""
+    route_preference: Literal["cheap", "capable"] = "cheap"
+    model_allowlist: list[str] = Field(default_factory=lambda: ["fixture-cheap", "fixture-capable"])
+    tool_allowlist: list[str] = Field(default_factory=lambda: ["lookup_leave", "export_directory"])
 
 
 class GuardrailPolicy(BaseModel):
@@ -102,6 +106,11 @@ class GuardrailPolicy(BaseModel):
     jev_risk_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     jev_output_toxicity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     jev_output_pii_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    strictness: Literal["standard", "strict"] = "standard"
+    route_preference: Literal["cheap", "capable"] = "cheap"
+    model_allowlist: list[str] = Field(default_factory=lambda: ["fixture-cheap", "fixture-capable"])
+    tool_allowlist: list[str] = Field(default_factory=lambda: ["lookup_leave", "export_directory"])
+    retention_days: int = Field(default=30, ge=1, le=3650)
 
 
 class GuardrailPolicyUpdate(BaseModel):
@@ -122,6 +131,11 @@ class GuardrailPolicyUpdate(BaseModel):
     jev_risk_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     jev_output_toxicity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     jev_output_pii_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    strictness: Literal["standard", "strict"] | None = None
+    route_preference: Literal["cheap", "capable"] | None = None
+    model_allowlist: list[str] | None = None
+    tool_allowlist: list[str] | None = None
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class RetrievalDebugHit(BaseModel):
@@ -156,6 +170,9 @@ class ChatEvent(BaseModel):
     context_precision: float | None = None
     answer_correctness: float | None = None
     eval_status: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    estimated_cost: float | None = None
 
 
 KAFKA_TOPICS: tuple[str, ...] = (
@@ -181,6 +198,31 @@ class ChatResponse(BaseModel):
     guardrail_decisions: list[GuardrailDecision] = Field(default_factory=list)
     assessments: list[JevAssessment] = Field(default_factory=list)
     retrieval_debug: RetrievalDebug | None = None
+    provider: str | None = None
+    model: str | None = None
+    approval_id: str | None = None
+
+
+class ApprovalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approve", "deny"]
+
+
+class ApprovalRecord(BaseModel):
+    id: str
+    status: Literal["pending", "approved", "denied"]
+    tool: str
+    detail: str
+
+
+class GovernanceRecord(BaseModel):
+    correlation_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    route: str | None = None
+    estimated_cost: float | None = None
+    approval_status: str | None = None
 
 
 class ConversationSummary(BaseModel):

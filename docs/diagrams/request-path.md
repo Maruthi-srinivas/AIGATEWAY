@@ -1,6 +1,28 @@
 # Request path
 
-## Version 10 (current)
+## Version 11 (current)
+
+The gateway is the only public port. After the input check it reads the tenant allowlist and picks one model, cheap or capable. `lookup_leave` returns fixture leave text. `export_directory` stores an approval and skips the LLM. A normal chat calls only the chosen provider. `GET /v1/governance` is a separate admin read and does not carry the prompt.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway
+    participant Guardrails
+    participant LLM
+    Client->>Gateway: POST /v1/chat
+    Gateway->>Guardrails: policy with allowlist
+    alt tool export_directory
+        Gateway->>Gateway: store approval, skip LLM
+    else tool lookup_leave
+        Gateway->>Gateway: fixture leave text
+    else normal chat
+        Gateway->>LLM: chosen provider only
+    end
+    Gateway-->>Client: ChatResponse plus provider, model, approval_id
+```
+
+## Version 10
 
 The gateway is the only public port. `POST /v1/chat` still returns the Version 7 response. Before retrieve, the gateway looks up a Redis answer for the tenant, role, guardrail policy hash, and normalized query. A miss that comes back with groundedness under 0.5 retries retrieve once with stopwords removed and keeps the better answer. After a knowledge chat, the gateway stores numeric scores and publishes one `ai.evaluations` event. Both are best-effort. Chitchat does not. `POST /v1/evaluate` is a separate call for `security_admin` and `platform_admin`. It runs the checked-in HR golden set through chat and returns a report. A mean faithfulness under 0.95 is recorded and does not fail the suite.
 

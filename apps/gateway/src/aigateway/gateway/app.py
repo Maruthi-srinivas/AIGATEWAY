@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse, Response
 
 from aigateway.config import GatewaySettings
 from aigateway.contracts import (
+    ApprovalDecision,
+    ApprovalRecord,
     ChatRequest,
     ChatResponse,
     ConversationDetail,
@@ -20,10 +22,12 @@ from aigateway.contracts import (
     DocumentList,
     EvaluateRequest,
     EvaluationReport,
+    GovernanceRecord,
     GuardrailPolicy,
     GuardrailPolicyUpdate,
 )
 from aigateway.gateway.answer_cache import AnswerCache
+from aigateway.gateway.approvals import handle_decide, handle_governance
 from aigateway.gateway.auth_client import HttpAuthClient
 from aigateway.gateway.chat import handle_chat, handle_get_conversation, handle_list_conversations
 from aigateway.gateway.db import close_engine, init_engine
@@ -38,6 +42,7 @@ from aigateway.gateway.errors import register_exception_handlers
 from aigateway.gateway.evals_client import HttpEvalsClient, NullEvalsClient
 from aigateway.gateway.evaluate import handle_evaluate
 from aigateway.gateway.events import KafkaEventPublisher, NullEventPublisher
+from aigateway.gateway.governance import MemoryGovernance, SqlGovernance
 from aigateway.gateway.guardrail_client import HttpGuardrailClient
 from aigateway.gateway.llm import build_llm_client
 from aigateway.gateway.middleware import (
@@ -78,6 +83,7 @@ def create_app(
     redis_client=None,
     evals_client=None,
     answer_cache: AnswerCache | None = None,
+    governance=None,
 ) -> FastAPI:
     checker = ReadinessChecker(
         settings,
@@ -124,7 +130,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.9.0",
+        version="0.10.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
@@ -154,6 +160,7 @@ def create_app(
     app.state.redis = redis_client
     app.state.evals_client = evals_client
     app.state.answer_cache = answer_cache
+    app.state.governance = governance
 
     async def ensure_runtime() -> None:
         if app.state.redis is None and app.state.rate_limiter is None:
@@ -175,6 +182,11 @@ def create_app(
             app.state.answer_cache = AnswerCache(app.state.redis)
         if app.state.llm_client is None:
             app.state.llm_client = build_llm_client(settings, app.state.http_client)
+        if app.state.governance is None:
+            if isinstance(app.state.chat_repo, SqlChatRepository):
+                app.state.governance = SqlGovernance()
+            else:
+                app.state.governance = MemoryGovernance()
 
     app.state.ensure_runtime = ensure_runtime
 
@@ -240,6 +252,26 @@ def create_app(
     )
     async def evaluate(request: Request, body: EvaluateRequest | None = None) -> EvaluationReport:
         return await handle_evaluate(request, body or EvaluateRequest())
+
+    @app.post("/v1/approvals/{approval_id}", tags=["approvals"], response_model=ApprovalRecord)
+    async def decide_approval(
+        request: Request,
+        approval_id: str,
+        body: ApprovalDecision,
+    ) -> ApprovalRecord:
+        return await handle_decide(request, approval_id, body)
+
+    @app.get("/v1/governance", tags=["governance"], response_model=list[GovernanceRecord])
+    async def governance_read(
+        request: Request,
+        correlation_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[GovernanceRecord]:
+        return await handle_governance(
+            request,
+            correlation_id=correlation_id,
+            tenant_id=tenant_id,
+        )
 
     @app.get("/v1/guardrails/policy", tags=["guardrails"])
     async def get_policy(request: Request, tenant_id: str | None = None) -> GuardrailPolicy:

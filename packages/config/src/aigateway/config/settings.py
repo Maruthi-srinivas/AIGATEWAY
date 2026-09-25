@@ -42,6 +42,9 @@ class GatewaySettings(ServiceSettings):
     openai_api_key: str = ""
     llm_model: str = ""
     llm_timeout_seconds: float = Field(default=30.0, ge=0.1)
+    provider_b_base_url: str = "https://api.openai.com/v1"
+    provider_b_api_key: str = ""
+    provider_b_model: str = ""
     kafka_bootstrap_servers: str = ""
     kafka_publish_timeout_seconds: float = Field(default=0.5, ge=0.1)
     evals_base_url: str = ""

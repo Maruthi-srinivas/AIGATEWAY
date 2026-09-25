@@ -1,11 +1,13 @@
 """Shared API models and Protocol ports. Implementations live in services, not here."""
 
 from aigateway.contracts.errors import (
+    ApprovalNotFoundError,
     AuthenticationError,
     AuthorizationError,
     ConversationNotFoundError,
     DocumentNotFoundError,
     EvalsUnavailableError,
+    GovernanceUnavailableError,
     GuardrailsUnavailableError,
     InputBlockedError,
     LlmUnavailableError,
@@ -17,6 +19,8 @@ from aigateway.contracts.errors import (
 )
 from aigateway.contracts.models import (
     KAFKA_TOPICS,
+    ApprovalDecision,
+    ApprovalRecord,
     AuthContext,
     ChatEvent,
     ChatRequest,
@@ -33,6 +37,7 @@ from aigateway.contracts.models import (
     EvaluationCase,
     EvaluationReport,
     EvaluationResult,
+    GovernanceRecord,
     GuardrailCheckResult,
     GuardrailDecision,
     GuardrailPolicy,
@@ -57,6 +62,9 @@ from aigateway.contracts.ports import (
 )
 
 __all__ = [
+    "ApprovalDecision",
+    "ApprovalNotFoundError",
+    "ApprovalRecord",
     "AuthContext",
     "AuthProvider",
     "AuthenticationError",
@@ -80,6 +88,8 @@ __all__ = [
     "EvaluationReport",
     "EvaluationResult",
     "Evaluator",
+    "GovernanceRecord",
+    "GovernanceUnavailableError",
     "Guardrail",
     "GuardrailCheckResult",
     "GuardrailDecision",

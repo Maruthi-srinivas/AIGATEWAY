@@ -13,6 +13,8 @@ def test_openapi_contains_version_5_paths() -> None:
     assert "/v1/ready" in paths
     assert "/v1/metrics" in paths
     assert "/v1/evaluate" in paths
+    assert "/v1/approvals/{approval_id}" in paths
+    assert "/v1/governance" in paths
     assert "/v1/chat" in paths
     assert "/v1/conversations" in paths
     assert "/v1/conversations/{conversation_id}" in paths
@@ -25,7 +27,7 @@ def test_openapi_contains_version_5_paths() -> None:
     assert any(p.startswith("/v1/auth") for p in paths)
     assert "post" in paths["/v1/chat"]
     assert "get" in paths["/v1/conversations"]
-    assert spec["info"]["version"] == "0.9.0"
+    assert spec["info"]["version"] == "0.10.0"
     schemes = spec["components"]["securitySchemes"]
     assert "BearerAuth" in schemes
     assert "ApiKeyAuth" in schemes
@@ -36,4 +38,8 @@ def test_openapi_contains_version_5_paths() -> None:
     assert "assessments" in chat
     assert "confidence" in chat
     assert "groundedness" in chat
+    assert "provider" in chat
+    assert "model" in chat
+    assert "approval_id" in chat
+    assert "estimated_cost" not in chat
     assert "faithfulness" not in chat

@@ -5,11 +5,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from aigateway.contracts import (
+    ApprovalNotFoundError,
     AuthenticationError,
     AuthorizationError,
     ConversationNotFoundError,
     DocumentNotFoundError,
     EvalsUnavailableError,
+    GovernanceUnavailableError,
     GuardrailsUnavailableError,
     InputBlockedError,
     LlmUnavailableError,
@@ -58,6 +60,10 @@ def rate_limit_headers(exc: RateLimitedError) -> dict[str, str]:
 
 
 def register_exception_handlers(app) -> None:
+    @app.exception_handler(ApprovalNotFoundError)
+    async def _approval_missing(_, exc: ApprovalNotFoundError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
     @app.exception_handler(AuthenticationError)
     async def _unauthenticated(_, exc: AuthenticationError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
@@ -117,6 +123,10 @@ def register_exception_handlers(app) -> None:
 
     @app.exception_handler(LlmUnavailableError)
     async def _llm_down(_, exc: LlmUnavailableError) -> JSONResponse:
+        return json_error(exc.status_code, exc.code, exc.detail)
+
+    @app.exception_handler(GovernanceUnavailableError)
+    async def _governance_down(_, exc: GovernanceUnavailableError) -> JSONResponse:
         return json_error(exc.status_code, exc.code, exc.detail)
 
     @app.exception_handler(EvalsUnavailableError)

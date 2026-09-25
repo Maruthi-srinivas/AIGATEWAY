@@ -1,6 +1,15 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 10 adds a lexical golden-set evaluator, one retrieval retry, and a tenant-scoped answer cache. Chat JSON stays the same. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+Docker-first middleware between applications and LLM providers. Version 11 adds org-level model routing, two fixture providers, one approval-gated tool, and a metadata governance read. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+
+## What Version 11 does
+
+- Two providers, `fixture-a` (`fixture-cheap`) and `fixture-b` (`fixture-capable`). Fixture mode needs no keys. Live mode uses `OPENAI_*` for the cheap route and `PROVIDER_B_*` for the capable route. The gateway calls only the chosen provider.
+- The tenant guardrail policy chooses `route_preference` (`cheap` or `capable`), `model_allowlist`, `tool_allowlist`, `strictness`, and `retention_days`. `strict` lowers Jev thresholds to 0.3 for that check and does not rewrite the saved thresholds. `retention_days` is stored and nothing is deleted.
+- `POST /v1/chat` may set `tool` to `lookup_leave` or `export_directory`. A tool off the allowlist is 403. `export_directory` returns HTTP 200 with `approval_id` and does not export anything. `security_admin` or `platform_admin` decides `POST /v1/approvals/{id}`. The requester cannot approve their own request.
+- Chat JSON gains optional `provider`, `model`, and `approval_id`. It does not gain a cost field.
+- `GET /v1/governance?correlation_id=` returns provider, model, route, estimated cost, and approval status for that tenant. No prompt or answer. Another tenant's id is an empty list. The write is best-effort. The read returns 503 `governance_unavailable` when the query fails. `/v1/ready` does not ping providers.
+- Gateway OpenAPI is **0.10.0**.
 
 ## What Version 10 does
 

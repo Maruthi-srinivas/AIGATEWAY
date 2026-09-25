@@ -5,7 +5,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## Scope
 
 - Implement one roadmap version at a time ([12_VERSION_FEATURE_ROADMAP.md](12_VERSION_FEATURE_ROADMAP.md)).
-- Current shipped slice is Version 10: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, tenant-scoped pgvector RAG, one OpenAI-compatible LLM adapter, **hybrid BM25 + vector retrieval**, **retrieval ACL / secret masking**, **sentence-level citation verification** with output secret redaction, a **metadata-only Kafka event backbone** with an analytics worker, **Prometheus, Grafana, and Tempo**, and **lexical golden-set evaluation** with one retrieval retry and a tenant-scoped answer cache.
+- Current shipped slice is Version 11: auth, RBAC, tenancy, chat orchestration, rate limits, SSE, conversations, input guardrails, a thin Jev output check, tenant-scoped pgvector RAG, **two OpenAI-compatible LLM providers** with cheap/capable routing, **hybrid BM25 + vector retrieval**, **retrieval ACL / secret masking**, **sentence-level citation verification** with output secret redaction, a **metadata-only Kafka event backbone** with an analytics worker, **Prometheus, Grafana, and Tempo**, **lexical golden-set evaluation** with one retrieval retry and a tenant-scoped answer cache, and **human approval** for one high-risk tool.
 - Do not add Kubernetes until its version.
 
 ## Architecture
@@ -22,7 +22,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 - Live LLM **fails closed** if the provider is down, slower than 30s, or the key/model is missing (503 `llm_unavailable`). Fixture mode stays keyless.
 - Every query that is not `platform_admin` must filter `tenant_id = ctx.tenant_id`.
 - Every log line should be JSON. Include correlation ID, and `user_id` / `tenant_id` when known.
-- Never log raw passwords, refresh tokens, full API keys (prefix only), raw prompts, model answers, dropped sentences, secret spans, document bodies, or chunk text. Kafka event payloads, trace spans, and evaluation rows follow the same rule.
+- Never log raw passwords, refresh tokens, full API keys (prefix only), raw prompts, model answers, dropped sentences, secret spans, document bodies, or chunk text. Kafka event payloads, trace spans, evaluation rows, and governance rows follow the same rule.
 
 ## Docker
 
@@ -37,7 +37,7 @@ This repository is a **Docker-only** monorepo. Follow these rules in every chang
 ## API contracts
 
 - Update OpenAPI when you add or change HTTP routes.
-- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, hybrid retrieve (unless chitchat), grounded generate, sentence citation checks, output secret redaction, and a thin Jev output check. FastAPI version is **0.9.0**.
+- `POST /v1/chat` requires auth, RBAC, rate limits, input guardrails, hybrid retrieve (unless chitchat or a tool), grounded generate, sentence citation checks, output secret redaction, and a thin Jev output check. FastAPI version is **0.10.0**.
 - `/v1/health` is liveness. `/v1/ready` checks Postgres, Redis, auth, guardrails, rag, and kafka. Ready does not ping a live LLM, Prometheus, Tempo, Grafana, or evals. Chat publish, trace export, and online evaluation stay best-effort. `POST /v1/evaluate` returns 503 `evals_unavailable` when that service is down.
 
 ## Docs and tests

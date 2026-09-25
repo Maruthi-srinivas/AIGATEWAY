@@ -1,6 +1,6 @@
-# Architecture (implemented through Version 10)
+# Architecture (implemented through Version 11)
 
-Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, evals, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.9.0**.
+Docker-first middleware between applications and LLM providers. The gateway is the only public port (`localhost:8000`). Auth, guardrails, RAG, evals, and the analytics worker stay on the Compose network. OpenAPI version on the gateway is **0.10.0**.
 
 This is what is running now. Kubernetes is a later version. `services/evals` stores numeric scores. The gateway calls it after a knowledge chat and from `POST /v1/evaluate`. Chat and `/v1/ready` do not fail when evals is down.
 

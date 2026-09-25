@@ -39,6 +39,26 @@ OUTPUT_JEV_RULES: dict[str, tuple[str, str]] = {
 }
 
 
+_STRICT_THRESHOLDS = (
+    "jev_injection_threshold",
+    "jev_jailbreak_threshold",
+    "jev_toxicity_threshold",
+    "jev_pii_threshold",
+    "jev_risk_threshold",
+    "jev_output_toxicity_threshold",
+    "jev_output_pii_threshold",
+)
+
+
+def effective_policy(policy: GuardrailPolicy) -> GuardrailPolicy:
+    """Apply the strict preset in memory. The saved row keeps its thresholds."""
+    if policy.strictness != "strict":
+        return policy
+    updates: dict[str, float | bool] = {name: 0.3 for name in _STRICT_THRESHOLDS}
+    updates["jev_enabled"] = True
+    return policy.model_copy(update=updates)
+
+
 def policy_hash(policy: GuardrailPolicy) -> str:
     raw = json.dumps(policy.model_dump(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -103,6 +123,8 @@ async def evaluate(
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> GuardrailCheckResult:
+    stored = policy
+    policy = effective_policy(policy)
     working = list(texts)
     decisions: list[GuardrailDecision] = []
     if policy.prompt_injection:
@@ -152,7 +174,10 @@ async def evaluate(
         decisions=decisions,
         texts=working,
         assessments=assessments,
-        policy_hash=policy_hash(policy),
+        policy_hash=policy_hash(stored),
+        route_preference=stored.route_preference,
+        model_allowlist=list(stored.model_allowlist),
+        tool_allowlist=list(stored.tool_allowlist),
     )
 
 
@@ -163,6 +188,8 @@ async def evaluate_output(
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> GuardrailCheckResult:
+    stored = policy
+    policy = effective_policy(policy)
     assessments: list[JevAssessment] = []
     decisions: list[GuardrailDecision] = []
     if policy.jev_enabled:
@@ -184,5 +211,8 @@ async def evaluate_output(
         decisions=decisions,
         texts=list(texts),
         assessments=assessments,
-        policy_hash=policy_hash(policy),
+        policy_hash=policy_hash(stored),
+        route_preference=stored.route_preference,
+        model_allowlist=list(stored.model_allowlist),
+        tool_allowlist=list(stored.tool_allowlist),
     )
