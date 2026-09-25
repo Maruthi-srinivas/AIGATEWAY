@@ -120,3 +120,83 @@ def test_governance_write_failure_keeps_chat_status() -> None:
     with TestClient(app) as client:
         response = client.post("/v1/chat", json={"message": "hello"}, headers=AUTH)
     assert response.status_code == 200
+
+
+async def test_summary_groups_models_and_skips_other_tenant() -> None:
+    store = MemoryGovernance()
+    await store.record(
+        tenant_id="tenant-a",
+        correlation_id="a1",
+        provider="fixture-a",
+        model="fixture-cheap",
+        route="cheap",
+        estimated_cost=0.0001,
+        approval_status=None,
+    )
+    await store.record(
+        tenant_id="tenant-a",
+        correlation_id="a2",
+        provider="fixture-b",
+        model="fixture-capable",
+        route="capable",
+        estimated_cost=0.001,
+        approval_status=None,
+    )
+    await store.record(
+        tenant_id="tenant-b",
+        correlation_id="b1",
+        provider="fixture-a",
+        model="fixture-cheap",
+        route="cheap",
+        estimated_cost=9.0,
+        approval_status=None,
+    )
+    summary = await store.summary("tenant-a")
+    by_model = {item.model: item for item in summary.models}
+    assert set(by_model) == {"fixture-cheap", "fixture-capable"}
+    assert by_model["fixture-cheap"].requests == 1
+    assert by_model["fixture-capable"].estimated_cost == 0.001
+    assert summary.total_requests == 2
+    assert abs(summary.total_estimated_cost - 0.0011) < 1e-9
+
+
+def test_summary_hides_the_prompt_and_rejects_app_user() -> None:
+    class Flip(FakeGuardrail):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seen = 0
+
+        async def check_input(self, *, tenant_id: str, texts: list) -> GuardrailCheckResult:
+            result = await super().check_input(tenant_id=tenant_id, texts=texts)
+            self.seen += 1
+            preference = "capable" if self.seen > 1 else "cheap"
+            return result.model_copy(update={"route_preference": preference})
+
+    auth = FakeAuthClient(context=_ctx())
+    app = _app(guardrail_client=Flip(), auth_client=auth)
+    with TestClient(app) as client:
+        denied = client.get("/v1/governance/summary", headers=AUTH)
+        assert denied.status_code == 403
+        auth.provider.context = _ctx(role="security_admin")
+        first = client.post("/v1/chat", json={"message": "payroll question"}, headers=AUTH)
+        second = client.post("/v1/chat", json={"message": "payroll question"}, headers=AUTH)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        summary = client.get("/v1/governance/summary", headers=AUTH)
+        other = client.get(
+            "/v1/governance/summary",
+            params={"tenant_id": "00000000-0000-0000-0000-000000000099"},
+            headers=AUTH,
+        )
+    assert summary.status_code == 200, summary.text
+    models = {item["model"] for item in summary.json()["models"]}
+    assert models == {"fixture-cheap", "fixture-capable"}
+    assert "payroll question" not in summary.text
+    assert other.status_code == 403
+
+
+def test_delete_audit_is_rejected() -> None:
+    app = _app()
+    with TestClient(app) as client:
+        response = client.delete("/v1/audit")
+    assert response.status_code in {404, 405}

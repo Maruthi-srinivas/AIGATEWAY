@@ -4,9 +4,14 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from aigateway.contracts import ApprovalNotFoundError, GovernanceRecord
+from aigateway.contracts import (
+    ApprovalNotFoundError,
+    GovernanceModelCost,
+    GovernanceRecord,
+    GovernanceSummary,
+)
 from aigateway.gateway.db import session_scope
 from aigateway.gateway.models import Approval, GovernanceEvent
 
@@ -26,6 +31,7 @@ class ApprovalRow:
 class MemoryGovernance:
     approvals: dict[str, ApprovalRow] = field(default_factory=dict)
     events: list[GovernanceRecord] = field(default_factory=list)
+    event_tenants: list[str] = field(default_factory=list)
     tenants: dict[str, str] = field(default_factory=dict)
 
     async def create_approval(
@@ -81,6 +87,7 @@ class MemoryGovernance:
                 approval_status=approval_status,
             )
         )
+        self.event_tenants.append(tenant_id)
 
     async def list_governance(
         self,
@@ -97,6 +104,14 @@ class MemoryGovernance:
                 continue
             rows.append(item)
         return rows[:50]
+
+    async def summary(self, tenant_id: str) -> GovernanceSummary:
+        owned = [
+            item
+            for tenant, item in zip(self.event_tenants, self.events, strict=True)
+            if tenant == tenant_id
+        ]
+        return _summarize(owned)
 
 
 class SqlGovernance:
@@ -188,6 +203,52 @@ class SqlGovernance:
                 )
                 for row in result.scalars()
             ]
+
+    async def summary(self, tenant_id: str) -> GovernanceSummary:
+        async with session_scope() as session:
+            stmt = (
+                select(
+                    GovernanceEvent.model,
+                    func.count(),
+                    func.coalesce(func.sum(GovernanceEvent.estimated_cost), 0.0),
+                )
+                .where(GovernanceEvent.tenant_id == uuid.UUID(tenant_id))
+                .group_by(GovernanceEvent.model)
+            )
+            result = await session.execute(stmt)
+            models = [
+                GovernanceModelCost(
+                    model=model or "unknown",
+                    requests=int(count),
+                    estimated_cost=float(cost or 0.0),
+                )
+                for model, count, cost in result.all()
+            ]
+            models.sort(key=lambda item: item.model)
+            return GovernanceSummary(
+                models=models,
+                total_requests=sum(item.requests for item in models),
+                total_estimated_cost=sum(item.estimated_cost for item in models),
+            )
+
+
+def _summarize(records: list[GovernanceRecord]) -> GovernanceSummary:
+    buckets: dict[str, GovernanceModelCost] = {}
+    for item in records:
+        name = item.model or "unknown"
+        current = buckets.get(name)
+        cost = float(item.estimated_cost or 0.0)
+        if current is None:
+            buckets[name] = GovernanceModelCost(model=name, requests=1, estimated_cost=cost)
+            continue
+        current.requests += 1
+        current.estimated_cost += cost
+    models = [buckets[name] for name in sorted(buckets)]
+    return GovernanceSummary(
+        models=models,
+        total_requests=sum(item.requests for item in models),
+        total_estimated_cost=sum(item.estimated_cost for item in models),
+    )
 
 
 def _approval(row: Approval) -> ApprovalRow:

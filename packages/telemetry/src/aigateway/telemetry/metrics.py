@@ -35,6 +35,12 @@ RAG_RETRIEVE = Counter(
     ["outcome"],
     registry=REGISTRY,
 )
+ESTIMATED_COST = Counter(
+    "aigateway_estimated_cost_dollars_total",
+    "Estimated model cost in dollars. Labeled by model only.",
+    ["model"],
+    registry=REGISTRY,
+)
 
 
 def observe_http(route: str, method: str, status: int, outcome: str, elapsed: float) -> None:
@@ -54,6 +60,12 @@ def observe_session_cache(outcome: str) -> None:
 
 def observe_rag(outcome: str) -> None:
     RAG_RETRIEVE.labels(outcome=outcome).inc()
+
+
+def observe_cost(model: str, amount: float) -> None:
+    if amount <= 0:
+        return
+    ESTIMATED_COST.labels(model=model or "unknown").inc(amount)
 
 
 def render_metrics() -> tuple[bytes, str]:

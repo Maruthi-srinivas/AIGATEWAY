@@ -10,6 +10,7 @@ from aigateway.contracts import (
     ApprovalRecord,
     AuthorizationError,
     GovernanceRecord,
+    GovernanceSummary,
     GovernanceUnavailableError,
     ValidationFailedError,
 )
@@ -70,6 +71,19 @@ async def handle_governance(
             tenant_id=effective,
             correlation_id=correlation_id,
         )
+    except GovernanceUnavailableError:
+        raise
+    except Exception as exc:
+        raise GovernanceUnavailableError() from exc
+
+
+async def handle_summary(request: Request, *, tenant_id: str | None) -> GovernanceSummary:
+    ctx = await require_auth(request)
+    if ctx.role not in APPROVE_ROLES:
+        raise AuthorizationError("governance is forbidden")
+    effective = effective_tenant_id(ctx, tenant_id)
+    try:
+        return await request.app.state.governance.summary(effective)
     except GovernanceUnavailableError:
         raise
     except Exception as exc:

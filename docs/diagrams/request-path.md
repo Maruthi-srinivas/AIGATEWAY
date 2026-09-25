@@ -1,6 +1,22 @@
 # Request path
 
-## Version 11 (current)
+## Version 12 (current)
+
+Compose is still the default. On Kubernetes, an Ingress is the only public entry and it forwards `/v1` to the gateway. `GET /v1/governance/summary` reads model totals for the caller tenant. Chat routing from Version 11 is unchanged.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Ingress
+    participant Gateway
+    participant Postgres
+    Client->>Ingress: GET /v1/governance/summary
+    Ingress->>Gateway: cluster-internal only
+    Gateway->>Postgres: sum estimated_cost by model
+    Gateway-->>Client: model totals, no prompt text
+```
+
+## Version 11
 
 The gateway is the only public port. After the input check it reads the tenant allowlist and picks one model, cheap or capable. `lookup_leave` returns fixture leave text. `export_directory` stores an approval and skips the LLM. A normal chat calls only the chosen provider. `GET /v1/governance` is a separate admin read and does not carry the prompt.
 

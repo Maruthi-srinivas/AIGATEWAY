@@ -225,6 +225,18 @@ class GovernanceRecord(BaseModel):
     approval_status: str | None = None
 
 
+class GovernanceModelCost(BaseModel):
+    model: str
+    requests: int
+    estimated_cost: float
+
+
+class GovernanceSummary(BaseModel):
+    models: list[GovernanceModelCost] = Field(default_factory=list)
+    total_requests: int = 0
+    total_estimated_cost: float = 0.0
+
+
 class ConversationSummary(BaseModel):
     id: str
     tenant_id: str

@@ -1,6 +1,14 @@
 # AI Safety Gateway
 
-Docker-first middleware between applications and LLM providers. Version 11 adds org-level model routing, two fixture providers, one approval-gated tool, and a metadata governance read. Compose stays keyless (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+Docker-first middleware between applications and LLM providers. Version 12 adds a Kubernetes install path, a tenant cost summary, and operations notes. Compose stays the default way to run and test (`EMBEDDING_MODE=fixture`, `LLM_MODE=fixture`).
+
+## What Version 12 does
+
+- Compose remains the default. Kubernetes manifests live in `infrastructure/k8s` (namespace `aigateway`). There is no Helm chart. Build the local images with Docker, tag them `aigateway/<service>:local`, and apply the YAML. Run the `migrate` Job and wait for it to finish before the app Deployments. Postgres, Redis, and Kafka stay single-replica. An Ingress sends `/v1` to the gateway only. The gateway Deployment rolls and has an HPA from 1 to 2 replicas. Every other app stays at 1 replica.
+- `GET /v1/governance/summary` is for `security_admin` and `platform_admin`. It sums `estimated_cost` and request count by model for that tenant. The body has no prompt or answer. A non-platform caller who passes another `tenant_id` gets 403. A read failure is 503 `governance_unavailable`.
+- Prometheus counter `aigateway_estimated_cost_dollars_total` is labeled by model only. Grafana includes an estimated-cost panel.
+- A golden-set faithfulness score under 0.95 is still tracked. It does not fail the Compose test or CI.
+- Gateway OpenAPI is **0.11.0**. `ChatResponse` still has no `estimated_cost`.
 
 ## What Version 11 does
 
@@ -24,7 +32,7 @@ Docker-first middleware between applications and LLM providers. Version 11 adds 
 ## What Version 9 does
 
 - Prometheus scrapes the gateway, auth, guardrails, RAG, and the worker. `GET /v1/metrics` on the gateway is unauthenticated Prometheus text. Labels are route, method, status, and outcome. No user id, tenant id, prompt, or answer.
-- Grafana is on [http://localhost:3000](http://localhost:3000) as an anonymous Viewer. Three dashboards are provisioned: latency with a 2 second line, safety blocks, and RAG misses.
+- Grafana is on [http://localhost:3000](http://localhost:3000) as an anonymous Viewer. Three dashboards are provisioned: latency with a 2 second line, safety blocks, and RAG misses. Version 12 adds an estimated-cost panel.
 - Traces go to Tempo over OTLP. Export is best-effort. Chat and `/v1/ready` do not call Prometheus, Tempo, or Grafana.
 - Kafka events keep `correlation_id` in the JSON body and also set the `X-Correlation-ID` header.
 - `GET /v1/audit?correlation_id=` returns that tenant's matching rows. Another tenant's id returns an empty list.

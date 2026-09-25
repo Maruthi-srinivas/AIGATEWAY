@@ -1164,3 +1164,56 @@ def test_live_routes_differ_and_export_needs_approval() -> None:
             headers=_bearer(sec),
             timeout=10.0,
         )
+
+
+@skip_without_stack
+def test_live_governance_summary_is_tenant_totals() -> None:
+    hr = _login("user@hr.local")
+    eng = _login("user@eng.local")
+    sec = _login("sec@hr.local")
+    prompt = f"summary-prompt-{uuid.uuid4().hex}"
+    try:
+        cheap = httpx.post(
+            f"{GATEWAY_URL}/v1/chat",
+            json={"message": prompt},
+            headers=_bearer(hr),
+            timeout=15.0,
+        )
+        assert cheap.status_code == 200, cheap.text
+        patched = httpx.patch(
+            f"{GATEWAY_URL}/v1/guardrails/policy",
+            json={"route_preference": "capable"},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )
+        assert patched.status_code == 200, patched.text
+        capable = httpx.post(
+            f"{GATEWAY_URL}/v1/chat",
+            json={"message": prompt},
+            headers=_bearer(hr),
+            timeout=15.0,
+        )
+        assert capable.status_code == 200, capable.text
+        summary = httpx.get(
+            f"{GATEWAY_URL}/v1/governance/summary",
+            headers=_bearer(sec),
+            timeout=10.0,
+        )
+        assert summary.status_code == 200, summary.text
+        models = {item["model"] for item in summary.json()["models"]}
+        assert "fixture-cheap" in models
+        assert "fixture-capable" in models
+        assert prompt not in summary.text
+        denied = httpx.get(
+            f"{GATEWAY_URL}/v1/governance/summary",
+            headers=_bearer(eng),
+            timeout=10.0,
+        )
+        assert denied.status_code == 403
+    finally:
+        httpx.patch(
+            f"{GATEWAY_URL}/v1/guardrails/policy",
+            json={"strictness": "standard", "route_preference": "cheap"},
+            headers=_bearer(sec),
+            timeout=10.0,
+        )

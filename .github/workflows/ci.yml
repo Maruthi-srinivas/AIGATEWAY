@@ -16,3 +16,12 @@ jobs:
 
       - name: Lint and test
         run: docker compose --profile test run --rm test
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Kubernetes manifests
+        run: docker run --rm -v "${PWD}/infrastructure/k8s:/manifests" ghcr.io/yannh/kubeconform:v0.6.7 -summary -ignore-missing-schemas /manifests

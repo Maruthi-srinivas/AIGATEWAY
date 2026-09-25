@@ -23,11 +23,12 @@ from aigateway.contracts import (
     EvaluateRequest,
     EvaluationReport,
     GovernanceRecord,
+    GovernanceSummary,
     GuardrailPolicy,
     GuardrailPolicyUpdate,
 )
 from aigateway.gateway.answer_cache import AnswerCache
-from aigateway.gateway.approvals import handle_decide, handle_governance
+from aigateway.gateway.approvals import handle_decide, handle_governance, handle_summary
 from aigateway.gateway.auth_client import HttpAuthClient
 from aigateway.gateway.chat import handle_chat, handle_get_conversation, handle_list_conversations
 from aigateway.gateway.db import close_engine, init_engine
@@ -130,7 +131,7 @@ def create_app(
 
     app = FastAPI(
         title="AI Safety Gateway",
-        version="0.10.0",
+        version="0.11.0",
         description="Docker-first middleware between applications and LLM providers.",
         lifespan=lifespan,
     )
@@ -272,6 +273,13 @@ def create_app(
             correlation_id=correlation_id,
             tenant_id=tenant_id,
         )
+
+    @app.get("/v1/governance/summary", tags=["governance"], response_model=GovernanceSummary)
+    async def governance_summary(
+        request: Request,
+        tenant_id: str | None = None,
+    ) -> GovernanceSummary:
+        return await handle_summary(request, tenant_id=tenant_id)
 
     @app.get("/v1/guardrails/policy", tags=["guardrails"])
     async def get_policy(request: Request, tenant_id: str | None = None) -> GuardrailPolicy:

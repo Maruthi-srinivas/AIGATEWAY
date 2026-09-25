@@ -54,7 +54,7 @@ from aigateway.gateway.repository import (
 from aigateway.gateway.routing import route_var, select_route
 from aigateway.gateway.sse import sse_event, with_heartbeat
 from aigateway.gateway.tools import APPROVAL_PENDING, LEAVE_TEXT
-from aigateway.telemetry import correlation_id_var, get_logger, span
+from aigateway.telemetry import correlation_id_var, get_logger, observe_cost, span
 
 logger = get_logger(__name__)
 
@@ -779,6 +779,7 @@ async def _record_governance(
             estimated_cost=estimated_cost,
             approval_status=approval_status,
         )
+        observe_cost(model, estimated_cost)
     except Exception:
         logger.warning("governance store failed")
 

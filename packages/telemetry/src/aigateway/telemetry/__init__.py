@@ -6,6 +6,7 @@ from aigateway.telemetry.logging import (
     user_id_var,
 )
 from aigateway.telemetry.metrics import (
+    observe_cost,
     observe_http,
     observe_rag,
     observe_session_cache,
@@ -17,6 +18,7 @@ from aigateway.telemetry.tracing import set_span_hook, setup_telemetry, span, tr
 __all__ = [
     "correlation_id_var",
     "get_logger",
+    "observe_cost",
     "observe_http",
     "observe_rag",
     "observe_session_cache",

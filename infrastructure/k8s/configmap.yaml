@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aigateway-config
+  namespace: aigateway
+data:
+  LOG_LEVEL: INFO
+  HOST: 0.0.0.0
+  PORT: "8000"
+  LLM_MODE: fixture
+  EMBEDDING_MODE: fixture
+  GUARDRAILS_MODE: fixture
+  SEED_ENABLED: "true"
+  POSTGRES_USER: aigateway
+  POSTGRES_DB: aigateway
+  AUTH_BASE_URL: http://auth:8000
+  GUARDRAILS_BASE_URL: http://guardrails:8000
+  RAG_BASE_URL: http://rag:8000
+  EVALS_BASE_URL: http://evals:8000
+  REDIS_URL: redis://redis:6379/0
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_PUBLISH_TIMEOUT_SECONDS: "0.5"
+  EVALS_TIMEOUT_SECONDS: "2"
+  LLM_TIMEOUT_SECONDS: "30"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+  CORS_ORIGINS: http://localhost:5173
+  OPENAI_BASE_URL: https://api.openai.com/v1
+  PROVIDER_B_BASE_URL: https://api.openai.com/v1

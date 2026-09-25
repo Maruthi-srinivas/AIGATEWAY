@@ -1,0 +1,469 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: aigateway
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: migrate
+          image: aigateway/migrate:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: migrate
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: JWT_SECRET
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: auth
+          image: aigateway/auth:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: auth
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: JWT_SECRET
+            - name: SEED_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: SEED_PASSWORD
+            - name: SEED_HR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: SEED_HR_API_KEY
+            - name: SEED_ENG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: SEED_ENG_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+  namespace: aigateway
+spec:
+  selector:
+    app: auth
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: aigateway
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: gateway
+          image: aigateway/gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: gateway
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: aigateway
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrails
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guardrails
+  template:
+    metadata:
+      labels:
+        app: guardrails
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: guardrails
+          image: aigateway/guardrails:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: guardrails
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrails
+  namespace: aigateway
+spec:
+  selector:
+    app: guardrails
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag
+  template:
+    metadata:
+      labels:
+        app: rag
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: rag
+          image: aigateway/rag:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: rag
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag
+  namespace: aigateway
+spec:
+  selector:
+    app: rag
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evals
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evals
+  template:
+    metadata:
+      labels:
+        app: evals
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: evals
+          image: aigateway/evals:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: evals
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: POSTGRES_DSN
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evals
+  namespace: aigateway
+spec:
+  selector:
+    app: evals
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: worker
+          image: aigateway/worker:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aigateway-config
+          env:
+            - name: SERVICE_NAME
+              value: worker
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aigateway-secrets
+                  key: INTERNAL_AUTH_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: aigateway
+spec:
+  selector:
+    app: worker
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: aigateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: aigateway/web:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: aigateway
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 8080
+      targetPort: 8080
